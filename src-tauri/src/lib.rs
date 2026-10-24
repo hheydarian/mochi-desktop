@@ -33,25 +33,42 @@ mod win_mem {
     extern "system" {
         fn GetCurrentProcess() -> *mut c_void;
         fn GetCurrentProcessId() -> u32;
-        fn SetProcessWorkingSetSize(h_process: *mut c_void, dw_minimum_working_set_size: usize, dw_maximum_working_set_size: usize) -> i32;
+        fn SetProcessWorkingSetSize(
+            h_process: *mut c_void,
+            dw_minimum_working_set_size: usize,
+            dw_maximum_working_set_size: usize,
+        ) -> i32;
         fn CreateToolhelp32Snapshot(dw_flags: u32, th32_process_id: u32) -> *mut c_void;
         fn Process32FirstW(h_snapshot: *mut c_void, lppe: *mut PROCESSENTRY32W) -> i32;
         fn Process32NextW(h_snapshot: *mut c_void, lppe: *mut PROCESSENTRY32W) -> i32;
         fn OpenProcess(dw_desired_access: u32, b_inherit_handle: i32, dw_process_id: u32) -> *mut c_void;
         fn CloseHandle(h_object: *mut c_void) -> i32;
+        fn GetProcessHeap() -> *mut c_void;
+        fn HeapCompact(h_heap: *mut c_void, dw_flags: u32) -> usize;
+        fn K32EmptyWorkingSet(h_process: *mut c_void) -> i32;
     }
 
-    /// Trims memory working set of Mochi and all child WebView2 helper processes
+    /// Trims memory working set of Mochi and ALL descendant WebView2 helper processes
+    /// Discovers parent-child-grandchild trees (browser, renderer, GPU, utilities)
     pub fn trim_all_working_sets() {
         unsafe {
             let my_pid = GetCurrentProcessId();
             let my_handle = GetCurrentProcess();
-            // Trim our own working set
+
+            // 1. Compact host default heap to coalesce and release committed blocks
+            let heap = GetProcessHeap();
+            if !heap.is_null() {
+                HeapCompact(heap, 0);
+            }
+
+            // 2. Aggressively empty host process working set (sub-1MB physical footprint)
+            K32EmptyWorkingSet(my_handle);
             SetProcessWorkingSetSize(my_handle, usize::MAX, usize::MAX);
 
-            // Also trim any child processes (msedgewebview2.exe, conhost.exe)
+            // 3. Discover all descendants (child, grandchild e.g. WebView2 browser, renderer, GPU)
             let snapshot = CreateToolhelp32Snapshot(0x00000002, 0); // TH32CS_SNAPPROCESS
             if !snapshot.is_null() && snapshot as isize != -1 {
+                let mut all_entries = Vec::with_capacity(128);
                 let mut entry = PROCESSENTRY32W {
                     dw_size: std::mem::size_of::<PROCESSENTRY32W>() as u32,
                     cnt_usage: 0,
@@ -67,20 +84,42 @@ mod win_mem {
 
                 if Process32FirstW(snapshot, &mut entry) != 0 {
                     loop {
-                        if entry.th32_parent_process_id == my_pid {
-                            // PROCESS_SET_QUOTA (0x0100) | PROCESS_QUERY_LIMITED_INFORMATION (0x1000)
-                            let child_handle = OpenProcess(0x0100 | 0x1000, 0, entry.th32_process_id);
-                            if !child_handle.is_null() {
-                                SetProcessWorkingSetSize(child_handle, usize::MAX, usize::MAX);
-                                CloseHandle(child_handle);
-                            }
-                        }
+                        all_entries.push((entry.th32_process_id, entry.th32_parent_process_id));
                         if Process32NextW(snapshot, &mut entry) == 0 {
                             break;
                         }
                     }
                 }
                 CloseHandle(snapshot);
+
+                // Recursively collect all descendant PIDs
+                let mut descendant_pids = std::collections::HashSet::new();
+                descendant_pids.insert(my_pid);
+
+                let mut added = true;
+                while added {
+                    added = false;
+                    for &(pid, parent_pid) in &all_entries {
+                        if descendant_pids.contains(&parent_pid) && !descendant_pids.contains(&pid) {
+                            descendant_pids.insert(pid);
+                            added = true;
+                        }
+                    }
+                }
+
+                // Trim each child and grandchild process (browser, renderer, gpu)
+                for pid in descendant_pids {
+                    if pid == my_pid {
+                        continue;
+                    }
+                    // PROCESS_SET_QUOTA (0x0100) | PROCESS_QUERY_LIMITED_INFORMATION (0x1000)
+                    let child_handle = OpenProcess(0x0100 | 0x1000, 0, pid);
+                    if !child_handle.is_null() {
+                        K32EmptyWorkingSet(child_handle);
+                        SetProcessWorkingSetSize(child_handle, usize::MAX, usize::MAX);
+                        CloseHandle(child_handle);
+                    }
+                }
             }
         }
     }
@@ -339,12 +378,12 @@ fn quit_app(app: tauri::AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Ultra-Low RAM & Low-Power Chromium Tuning for WebView2:
-    // Disables unused services, caps renderer processes, and sets tight V8 memory limits
+    // Disables unused background services, caps renderer processes, and activates V8 lite-mode
     #[cfg(target_os = "windows")]
     {
         std::env::set_var(
             "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
-            "--disable-features=Translate,OptimizationHints,MediaRouter,CalculateNativeWinOcclusion \
+            "--disable-features=Translate,OptimizationHints,MediaRouter,CalculateNativeWinOcclusion,InterestFeedContentSuggestions \
              --disable-background-networking \
              --disable-component-update \
              --disable-domain-reliability \
@@ -354,8 +393,14 @@ pub fn run() {
              --disable-extensions \
              --disable-sync \
              --disable-speech-api \
+             --disable-speech-synthesis-api \
+             --disable-media-session-api \
+             --disable-notifications \
+             --disable-gpu-shader-disk-cache \
+             --disk-cache-size=1 \
+             --media-cache-size=1 \
              --renderer-process-limit=1 \
-             --js-flags=--max-old-space-size=64",
+             --js-flags=--max-old-space-size=32 --optimize-for-size --lite-mode --expose-gc",
         );
     }
 
@@ -457,11 +502,14 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            // Initial memory trim after 3 seconds of startup
+            // Multi-Stage Aggressive Working Set Trimming during startup:
+            // Trims at 2s, 4s, and 7s to catch post-V8 compilation, model uploads, and initial WebGL bindings
             std::thread::spawn(|| {
-                std::thread::sleep(std::time::Duration::from_secs(3));
-                #[cfg(target_os = "windows")]
-                win_mem::trim_all_working_sets();
+                for delay in [2, 4, 7] {
+                    std::thread::sleep(std::time::Duration::from_secs(delay));
+                    #[cfg(target_os = "windows")]
+                    win_mem::trim_all_working_sets();
+                }
             });
 
             // Ultra-Light Native Cursor Tracking Thread with Adaptive Governor:
@@ -516,8 +564,8 @@ pub fn run() {
                     if (pt.x - last_raw_x).abs() < 4 && (pt.y - last_raw_y).abs() < 4 {
                         still_ticks = still_ticks.saturating_add(1);
 
-                        // Periodically trim memory every 30s of stillness
-                        if still_ticks % 300 == 0 {
+                        // Periodically purge working sets every ~8s of stillness
+                        if still_ticks % 80 == 0 {
                             #[cfg(target_os = "windows")]
                             win_mem::trim_all_working_sets();
                         }

@@ -171,18 +171,41 @@ export const MochiModel: React.FC<{ isHovered?: boolean }> = ({ isHovered = fals
     initGlobalCursorTracking(() => useMochiStore.getState().globalMouseTracking);
   }, []);
 
-  // Trigger Win32 working set trim 2.5s after mount once models are resident in memory
+  // Trigger V8 garbage collection and Win32 working set trim proactively
   useEffect(() => {
-    const timer = setTimeout(async () => {
+    const triggerCleanMemory = async () => {
       try {
+        if (typeof window !== 'undefined' && 'gc' in window && typeof (window as any).gc === 'function') {
+          (window as any).gc();
+        }
         const { invoke } = await import('@tauri-apps/api/core');
         await invoke('trim_memory');
       } catch {
         // Ignore in web preview
       }
-    }, 2500);
-    return () => clearTimeout(timer);
+    };
+
+    const t1 = setTimeout(triggerCleanMemory, 1800);
+    const t2 = setTimeout(triggerCleanMemory, 4000);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
   }, []);
+
+  // When mascot falls asleep, force V8 GC and trim working set
+  useEffect(() => {
+    if (mascotState === 'sleeping') {
+      try {
+        if (typeof window !== 'undefined' && 'gc' in window && typeof (window as any).gc === 'function') {
+          (window as any).gc();
+        }
+        import('@tauri-apps/api/core').then(({ invoke }) => invoke('trim_memory'));
+      } catch {
+        // Ignore in web preview
+      }
+    }
+  }, [mascotState]);
 
   // Speed multiplier
   const speedMult = useMemo(() => {
