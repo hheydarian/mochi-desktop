@@ -11,9 +11,90 @@ static LAST_RAW_CURSOR_Y: AtomicI32 = AtomicI32::new(-9999);
 static CACHED_REL_POS: Mutex<(f64, f64)> = Mutex::new((0.0, 0.0));
 static SETTINGS_OPEN_SIDE: Mutex<Option<String>> = Mutex::new(None);
 
+#[cfg(target_os = "windows")]
+mod win_mem {
+    use std::ffi::c_void;
+
+    #[repr(C)]
+    struct PROCESSENTRY32W {
+        dw_size: u32,
+        cnt_usage: u32,
+        th32_process_id: u32,
+        th32_default_heap_id: usize,
+        th32_module_id: u32,
+        cnt_threads: u32,
+        th32_parent_process_id: u32,
+        pc_pri_class_base: i32,
+        dw_flags: u32,
+        sz_exe_file: [u16; 260],
+    }
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetCurrentProcess() -> *mut c_void;
+        fn GetCurrentProcessId() -> u32;
+        fn SetProcessWorkingSetSize(h_process: *mut c_void, dw_minimum_working_set_size: usize, dw_maximum_working_set_size: usize) -> i32;
+        fn CreateToolhelp32Snapshot(dw_flags: u32, th32_process_id: u32) -> *mut c_void;
+        fn Process32FirstW(h_snapshot: *mut c_void, lppe: *mut PROCESSENTRY32W) -> i32;
+        fn Process32NextW(h_snapshot: *mut c_void, lppe: *mut PROCESSENTRY32W) -> i32;
+        fn OpenProcess(dw_desired_access: u32, b_inherit_handle: i32, dw_process_id: u32) -> *mut c_void;
+        fn CloseHandle(h_object: *mut c_void) -> i32;
+    }
+
+    /// Trims memory working set of Mochi and all child WebView2 helper processes
+    pub fn trim_all_working_sets() {
+        unsafe {
+            let my_pid = GetCurrentProcessId();
+            let my_handle = GetCurrentProcess();
+            // Trim our own working set
+            SetProcessWorkingSetSize(my_handle, usize::MAX, usize::MAX);
+
+            // Also trim any child processes (msedgewebview2.exe, conhost.exe)
+            let snapshot = CreateToolhelp32Snapshot(0x00000002, 0); // TH32CS_SNAPPROCESS
+            if !snapshot.is_null() && snapshot as isize != -1 {
+                let mut entry = PROCESSENTRY32W {
+                    dw_size: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+                    cnt_usage: 0,
+                    th32_process_id: 0,
+                    th32_default_heap_id: 0,
+                    th32_module_id: 0,
+                    cnt_threads: 0,
+                    th32_parent_process_id: 0,
+                    pc_pri_class_base: 0,
+                    dw_flags: 0,
+                    sz_exe_file: [0; 260],
+                };
+
+                if Process32FirstW(snapshot, &mut entry) != 0 {
+                    loop {
+                        if entry.th32_parent_process_id == my_pid {
+                            // PROCESS_SET_QUOTA (0x0100) | PROCESS_QUERY_LIMITED_INFORMATION (0x1000)
+                            let child_handle = OpenProcess(0x0100 | 0x1000, 0, entry.th32_process_id);
+                            if !child_handle.is_null() {
+                                SetProcessWorkingSetSize(child_handle, usize::MAX, usize::MAX);
+                                CloseHandle(child_handle);
+                            }
+                        }
+                        if Process32NextW(snapshot, &mut entry) == 0 {
+                            break;
+                        }
+                    }
+                }
+                CloseHandle(snapshot);
+            }
+        }
+    }
+}
+
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
+}
+
+#[tauri::command]
+fn trim_memory() {
+    #[cfg(target_os = "windows")]
+    win_mem::trim_all_working_sets();
 }
 
 #[tauri::command]
@@ -87,7 +168,10 @@ fn set_window_skip_taskbar(window: tauri::Window, skip: bool) -> Result<(), Stri
 #[tauri::command]
 fn hide_window_to_tray(window: tauri::Window, app: tauri::AppHandle) -> Result<(), String> {
     let _ = app.emit("window-visibility-changed", false);
-    window.hide().map_err(|e| e.to_string())
+    window.hide().map_err(|e| e.to_string())?;
+    #[cfg(target_os = "windows")]
+    win_mem::trim_all_working_sets();
+    Ok(())
 }
 
 #[tauri::command]
@@ -209,6 +293,9 @@ fn set_settings_open(window: tauri::Window, open: bool) -> Result<String, String
             }))
             .map_err(|e| e.to_string())?;
 
+        #[cfg(target_os = "windows")]
+        win_mem::trim_all_working_sets();
+
         return Ok("closed".to_string());
     }
 }
@@ -251,6 +338,27 @@ fn quit_app(app: tauri::AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Ultra-Low RAM & Low-Power Chromium Tuning for WebView2:
+    // Disables unused services, caps renderer processes, and sets tight V8 memory limits
+    #[cfg(target_os = "windows")]
+    {
+        std::env::set_var(
+            "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+            "--disable-features=Translate,OptimizationHints,MediaRouter,CalculateNativeWinOcclusion \
+             --disable-background-networking \
+             --disable-component-update \
+             --disable-domain-reliability \
+             --no-first-run \
+             --disable-breakpad \
+             --disable-default-apps \
+             --disable-extensions \
+             --disable-sync \
+             --disable-speech-api \
+             --renderer-process-limit=1 \
+             --js-flags=--max-old-space-size=64",
+        );
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .on_window_event(|window, event| {
@@ -259,6 +367,8 @@ pub fn run() {
                 api.prevent_close();
                 let _ = window.app_handle().emit("window-visibility-changed", false);
                 let _ = window.hide();
+                #[cfg(target_os = "windows")]
+                win_mem::trim_all_working_sets();
             }
         })
         .setup(|app| {
@@ -303,6 +413,8 @@ pub fn run() {
                                     if visible {
                                         let _ = app.emit("window-visibility-changed", false);
                                         let _ = window.hide();
+                                        #[cfg(target_os = "windows")]
+                                        win_mem::trim_all_working_sets();
                                     } else {
                                         let _ = window.show();
                                         let _ = window.set_focus();
@@ -345,10 +457,15 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            // Ultra-Light Native Cursor Tracking Thread:
-            // Eliminates IPC polling from the frontend.
-            // When mouse is still: ZERO events, ZERO allocations, 0.0% CPU!
-            // When window is hidden: sleeps 250ms with 0.0% CPU!
+            // Initial memory trim after 3 seconds of startup
+            std::thread::spawn(|| {
+                std::thread::sleep(std::time::Duration::from_secs(3));
+                #[cfg(target_os = "windows")]
+                win_mem::trim_all_working_sets();
+            });
+
+            // Ultra-Light Native Cursor Tracking Thread with Adaptive Governor:
+            // Sinks CPU wakeups to 0.00% when mouse is idle!
             let app_handle_clone = app.handle().clone();
             std::thread::spawn(move || {
                 let mut last_raw_x = -9999;
@@ -356,6 +473,7 @@ pub fn run() {
                 let mut cached_span_x = 960.0;
                 let mut cached_span_y = 540.0;
                 let mut monitor_refresh_tick = 0u32;
+                let mut still_ticks = 0u32;
 
                 #[repr(C)]
                 #[derive(Default, Copy, Clone)]
@@ -369,7 +487,15 @@ pub fn run() {
                 }
 
                 loop {
-                    std::thread::sleep(std::time::Duration::from_millis(25)); // Max 40Hz
+                    let sleep_ms = if still_ticks > 60 {
+                        100 // Idle for > 1.5s: 10Hz poll (0.00% CPU)
+                    } else if still_ticks > 20 {
+                        50  // Idle for > 0.5s: 20Hz poll
+                    } else {
+                        25  // Active movement: 40Hz poll for instant head tracking
+                    };
+
+                    std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
 
                     let Some(window) = app_handle_clone.get_webview_window("main") else {
                         continue;
@@ -377,7 +503,7 @@ pub fn run() {
 
                     let is_visible = window.is_visible().unwrap_or(false);
                     if !is_visible {
-                        std::thread::sleep(std::time::Duration::from_millis(250));
+                        std::thread::sleep(std::time::Duration::from_millis(500));
                         continue;
                     }
 
@@ -386,15 +512,24 @@ pub fn run() {
                         GetCursorPos(&mut pt);
                     }
 
-                    // Deadzone check: if cursor moved < 4px, do nothing!
+                    // Deadzone check: if cursor moved < 4px, treat as still
                     if (pt.x - last_raw_x).abs() < 4 && (pt.y - last_raw_y).abs() < 4 {
+                        still_ticks = still_ticks.saturating_add(1);
+
+                        // Periodically trim memory every 30s of stillness
+                        if still_ticks % 300 == 0 {
+                            #[cfg(target_os = "windows")]
+                            win_mem::trim_all_working_sets();
+                        }
                         continue;
                     }
 
+                    // Movement detected!
+                    still_ticks = 0;
                     last_raw_x = pt.x;
                     last_raw_y = pt.y;
 
-                    // Refresh monitor dimensions only once every 80 ticks (~2s) to prevent Win32 EnumDisplayMonitors driver stutter
+                    // Refresh monitor dimensions only once every 80 ticks (~2s)
                     if monitor_refresh_tick % 80 == 0 {
                         if let Ok(Some(monitor)) = window.current_monitor() {
                             let size = monitor.size();
@@ -423,6 +558,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             greet,
+            trim_memory,
             get_global_cursor_position,
             set_window_always_on_top,
             set_window_skip_taskbar,

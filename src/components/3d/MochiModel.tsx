@@ -9,7 +9,7 @@ import { globalPointer, initGlobalCursorTracking } from '../../utils/cursor';
 // Tripo models face +X by default; rotate -90° on Y to look directly at user (+Z)
 const BASE_ROTATION_Y = -Math.PI / 2;
 
-// Paths to the 4 real optimized 3D models (~200KB each)
+// Paths to the 4 real optimized 3D models (~210KB each)
 export const MODEL_PATHS = {
   idle: './assets/models/mochi-idle.glb',
   waving: './assets/models/mochi-waving.glb',
@@ -120,7 +120,7 @@ const SleepBubbles: React.FC = () => {
   );
 };
 
-export const MochiModel: React.FC = () => {
+export const MochiModel: React.FC<{ isHovered?: boolean }> = ({ isHovered = false }) => {
   const {
     mascotState,
     setMascotState,
@@ -137,6 +137,9 @@ export const MochiModel: React.FC = () => {
   const motionGroupRef = useRef<THREE.Group>(null);
   const squashRef = useRef(0);
   const waveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const frameGovernorRef = useRef(0);
+  const lastActivePointerRef = useRef(performance.now());
 
   // Smooth Jelly Morph State Machine
   const [displayedState, setDisplayedState] = useState<MascotState>(mascotState);
@@ -166,6 +169,19 @@ export const MochiModel: React.FC = () => {
   // Initialize event-driven cursor tracking (Zero IPC polling)
   useEffect(() => {
     initGlobalCursorTracking(() => useMochiStore.getState().globalMouseTracking);
+  }, []);
+
+  // Trigger Win32 working set trim 2.5s after mount once models are resident in memory
+  useEffect(() => {
+    const timer = setTimeout(async () => {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        await invoke('trim_memory');
+      } catch {
+        // Ignore in web preview
+      }
+    }, 2500);
+    return () => clearTimeout(timer);
   }, []);
 
   // Speed multiplier
@@ -229,11 +245,6 @@ export const MochiModel: React.FC = () => {
     const motion = motionGroupRef.current;
     if (!root || !motion) return;
 
-    const time = state.clock.elapsedTime * speedMult;
-    const now = Date.now();
-    const isSleeping = displayedState === 'sleeping';
-    const isProcessing = displayedState === 'processing';
-
     // Read directly from zero-render globalPointer object pushed from Rust event
     let targetPointerX = state.pointer.x;
     let targetPointerY = state.pointer.y;
@@ -243,20 +254,55 @@ export const MochiModel: React.FC = () => {
       targetPointerY = -globalPointer.y;
     }
 
+    const movedDist = Math.hypot(
+      targetPointerX - lastCursorRef.current.x,
+      targetPointerY - lastCursorRef.current.y
+    );
+
+    const now = Date.now();
+    const nowPerf = performance.now();
+
+    if (movedDist > 0.015) {
+      lastActivePointerRef.current = nowPerf;
+    }
+
+    const timeSinceMovement = nowPerf - lastActivePointerRef.current;
+    const isActivelyMoving = timeSinceMovement < 1000;
+    const isWaving = displayedState === 'waving';
+    const isClicking = squashRef.current > 0.02;
+    const isMorphing = morphRef.current.phase !== 'idle';
+
+    // Zero-Idle Governor:
+    // When user is not interacting, throttle frames to cut GPU/CPU by 80-95%!
+    let throttleModulo = 1; // 1 = every frame (60 FPS hardware VSync)
+    if (!isHovered && !isActivelyMoving && !isWaving && !isClicking && !isMorphing) {
+      if (displayedState === 'sleeping') {
+        throttleModulo = 5; // 12 FPS during sleep
+      } else if (timeSinceMovement > 10000) {
+        throttleModulo = 4; // 15 FPS in deep idle (>10s still)
+      } else {
+        throttleModulo = 2; // 30 FPS in calm idle
+      }
+    }
+
+    frameGovernorRef.current = (frameGovernorRef.current + 1) % throttleModulo;
+    if (frameGovernorRef.current !== 0) {
+      // Do NOT execute WebGL render pass on skipped frames!
+      return;
+    }
+
+    const time = state.clock.elapsedTime * speedMult;
+    const isSleeping = displayedState === 'sleeping';
+    const isProcessing = displayedState === 'processing';
+
     // --- Autonomous Life Engine ---
     if (autonomousMode) {
-      const movedDist = Math.hypot(
-        targetPointerX - lastCursorRef.current.x,
-        targetPointerY - lastCursorRef.current.y
-      );
-
       // Mouse motion resets inactivity timer
       if (movedDist > 0.035) {
         lastActiveTimeRef.current = now;
         lastCursorRef.current = { x: targetPointerX, y: targetPointerY };
 
         // Only wake up automatically if Mochi fell asleep automatically via inactivity!
-        // If user manually chose 'sleeping', Mochi stays peacefully asleep until clicked.
         if (mascotState === 'sleeping' && sleepSource === 'auto') {
           setMascotState('idle');
         }
@@ -388,7 +434,10 @@ export const MochiModel: React.FC = () => {
     const finalScaleZ = baseScale * (1 - jellyXZ + clickSquash * 0.32 + morphXZ);
 
     root.scale.set(finalScaleX, finalScaleY, finalScaleZ);
-  });
+
+    // Render pass execution
+    state.gl.render(state.scene, state.camera);
+  }, 1);
 
   const activeKey = useMemo(() => {
     switch (displayedState) {

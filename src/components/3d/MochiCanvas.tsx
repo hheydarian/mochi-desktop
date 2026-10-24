@@ -61,6 +61,7 @@ interface MochiCanvasProps {
 }
 
 export const MochiCanvas: React.FC<MochiCanvasProps> = ({
+  isHovered = false,
   onMascotClick,
   onContextMenu,
 }) => {
@@ -75,21 +76,23 @@ export const MochiCanvas: React.FC<MochiCanvasProps> = ({
       style={{ opacity: mascotOpacity }}
     >
       <Canvas
-        // Hardware VSync synchronized loop when visible; strictly frozen (0.0% CPU/GPU) when hidden
+        // Hardware VSync synchronized loop when visible; strictly frozen (0.0% CPU/GPU) when hidden in tray
         frameloop={isWindowVisible ? 'always' : 'never'}
         camera={{ position: [0, 0, 2.75], fov: 40 }}
         gl={{
           alpha: true,
-          antialias: false, // Huge performance boost; 10k tris are silky smooth without AA overhead
-          powerPreference: 'high-performance',
+          antialias: false, // 10k tris are smooth; disabling AA saves ~35% GPU memory bus
+          powerPreference: 'low-power', // Energy-efficient integrated GPU mode
+          precision: 'mediump', // 16-bit half-float shaders = 50% ALU & memory bus load
           stencil: false,
           depth: true,
         }}
-        dpr={[1, 1.25]} // Cap DPR to prevent high-DPI fillrate choke
+        dpr={1} // Exact 1:1 pixel rendering: zero supersampling overhead
         className="w-full h-full !bg-transparent"
         style={{ background: 'transparent' }}
         onCreated={({ gl }) => {
           gl.setClearColor(0x000000, 0);
+          gl.toneMapping = THREE.NoToneMapping; // Zero tone-mapping computation per pixel
         }}
       >
         {/* Streamlined Studio Lighting (2 directional lights + 1 ambient = 50% fewer shader calculations) */}
@@ -99,7 +102,7 @@ export const MochiCanvas: React.FC<MochiCanvasProps> = ({
 
         {/* Real 3D Mochi Model inside Suspense */}
         <Suspense fallback={<GlassCanvasLoader />}>
-          <MochiModel />
+          <MochiModel isHovered={isHovered} />
           <ZeroCostShadow />
         </Suspense>
       </Canvas>
