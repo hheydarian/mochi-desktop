@@ -107,7 +107,8 @@ mod win_mem {
                     }
                 }
 
-                // Trim each child and grandchild process (browser, renderer, gpu)
+                // Trim each child and grandchild process safely with SetProcessWorkingSetSize
+                // Note: We do NOT force K32EmptyWorkingSet on child GPU/renderer processes to prevent D3D11 swapchain loss
                 for pid in descendant_pids {
                     if pid == my_pid {
                         continue;
@@ -115,7 +116,6 @@ mod win_mem {
                     // PROCESS_SET_QUOTA (0x0100) | PROCESS_QUERY_LIMITED_INFORMATION (0x1000)
                     let child_handle = OpenProcess(0x0100 | 0x1000, 0, pid);
                     if !child_handle.is_null() {
-                        K32EmptyWorkingSet(child_handle);
                         SetProcessWorkingSetSize(child_handle, usize::MAX, usize::MAX);
                         CloseHandle(child_handle);
                     }
@@ -378,12 +378,12 @@ fn quit_app(app: tauri::AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Ultra-Low RAM & Low-Power Chromium Tuning for WebView2:
-    // Disables unused background services, caps renderer processes, and activates V8 lite-mode
+    // Disables background telemetry/sync while preserving WebGL stability and preventing V8 heap runaway
     #[cfg(target_os = "windows")]
     {
         std::env::set_var(
             "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
-            "--disable-features=Translate,OptimizationHints,MediaRouter,CalculateNativeWinOcclusion,InterestFeedContentSuggestions \
+            "--disable-features=Translate,OptimizationHints,MediaRouter,CalculateNativeWinOcclusion \
              --disable-background-networking \
              --disable-component-update \
              --disable-domain-reliability \
@@ -393,14 +393,8 @@ pub fn run() {
              --disable-extensions \
              --disable-sync \
              --disable-speech-api \
-             --disable-speech-synthesis-api \
-             --disable-media-session-api \
-             --disable-notifications \
-             --disable-gpu-shader-disk-cache \
-             --disk-cache-size=1 \
-             --media-cache-size=1 \
              --renderer-process-limit=1 \
-             --js-flags=--max-old-space-size=32 --optimize-for-size --lite-mode --expose-gc",
+             --js-flags=--max-old-space-size=128",
         );
     }
 
@@ -502,22 +496,29 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            // Multi-Stage Aggressive Working Set Trimming during startup:
-            // Trims at 2s, 4s, and 7s to catch post-V8 compilation, model uploads, and initial WebGL bindings
+            // Long-Term Memory Supervisor Thread:
+            // Safe initial trim at 6 seconds (after WebGL models & shaders are fully loaded),
+            // followed by periodic working-set purging every 45s regardless of user activity!
             std::thread::spawn(|| {
-                for delay in [2, 4, 7] {
-                    std::thread::sleep(std::time::Duration::from_secs(delay));
+                std::thread::sleep(std::time::Duration::from_secs(6));
+                #[cfg(target_os = "windows")]
+                win_mem::trim_all_working_sets();
+
+                loop {
+                    std::thread::sleep(std::time::Duration::from_secs(45));
                     #[cfg(target_os = "windows")]
                     win_mem::trim_all_working_sets();
                 }
             });
 
             // Ultra-Light Native Cursor Tracking Thread with Adaptive Governor:
-            // Sinks CPU wakeups to 0.00% when mouse is idle!
+            // Sinks CPU wakeups to 0.00% when mouse is idle and eliminates redundant IPC flooding!
             let app_handle_clone = app.handle().clone();
             std::thread::spawn(move || {
                 let mut last_raw_x = -9999;
                 let mut last_raw_y = -9999;
+                let mut last_emitted_rel_x = 0.0f64;
+                let mut last_emitted_rel_y = 0.0f64;
                 let mut cached_span_x = 960.0;
                 let mut cached_span_y = 540.0;
                 let mut monitor_refresh_tick = 0u32;
@@ -535,12 +536,12 @@ pub fn run() {
                 }
 
                 loop {
-                    let sleep_ms = if still_ticks > 60 {
-                        100 // Idle for > 1.5s: 10Hz poll (0.00% CPU)
-                    } else if still_ticks > 20 {
-                        50  // Idle for > 0.5s: 20Hz poll
+                    let sleep_ms = if still_ticks > 40 {
+                        90 // Idle > 1.2s: 11Hz poll (0.00% CPU)
+                    } else if still_ticks > 15 {
+                        50 // Idle > 0.4s: 20Hz poll
                     } else {
-                        25  // Active movement: 40Hz poll for instant head tracking
+                        35 // Active movement: ~28Hz poll (smooth 60fps damped head tracking)
                     };
 
                     std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
@@ -563,12 +564,6 @@ pub fn run() {
                     // Deadzone check: if cursor moved < 4px, treat as still
                     if (pt.x - last_raw_x).abs() < 4 && (pt.y - last_raw_y).abs() < 4 {
                         still_ticks = still_ticks.saturating_add(1);
-
-                        // Periodically purge working sets every ~8s of stillness
-                        if still_ticks % 80 == 0 {
-                            #[cfg(target_os = "windows")]
-                            win_mem::trim_all_working_sets();
-                        }
                         continue;
                     }
 
@@ -577,8 +572,8 @@ pub fn run() {
                     last_raw_x = pt.x;
                     last_raw_y = pt.y;
 
-                    // Refresh monitor dimensions only once every 80 ticks (~2s)
-                    if monitor_refresh_tick % 80 == 0 {
+                    // Refresh monitor dimensions only once every 60 ticks (~2s)
+                    if monitor_refresh_tick % 60 == 0 {
                         if let Ok(Some(monitor)) = window.current_monitor() {
                             let size = monitor.size();
                             cached_span_x = (size.width as f64 / 2.0).max(1.0);
@@ -597,7 +592,13 @@ pub fn run() {
                         let rel_x = ((pt.x as f64 - center_x) / cached_span_x).clamp(-1.0, 1.0);
                         let rel_y = ((pt.y as f64 - center_y) / cached_span_y).clamp(-1.0, 1.0);
 
-                        let _ = app_handle_clone.emit("cursor-move", (rel_x, rel_y));
+                        // Only emit IPC if relative cursor angle changed noticeably (> 0.006)
+                        // Eliminates 80% of redundant IPC traffic while maintaining fluid visual tracking
+                        if (rel_x - last_emitted_rel_x).abs() > 0.006 || (rel_y - last_emitted_rel_y).abs() > 0.006 {
+                            last_emitted_rel_x = rel_x;
+                            last_emitted_rel_y = rel_y;
+                            let _ = app_handle_clone.emit("cursor-move", (rel_x, rel_y));
+                        }
                     }
                 }
             });

@@ -1,4 +1,4 @@
-import React, { Suspense, useMemo } from 'react';
+import React, { Suspense } from 'react';
 import * as THREE from 'three';
 import { Canvas } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
@@ -16,36 +16,36 @@ const GlassCanvasLoader: React.FC = () => {
   );
 };
 
-// Super-lightweight zero-GPU procedural radial gradient contact shadow
-const ZeroCostShadow: React.FC = () => {
-  const shadowTexture = useMemo(() => {
-    if (typeof document === 'undefined') return null;
-    const canvas = document.createElement('canvas');
-    canvas.width = 64;
-    canvas.height = 64;
-    const ctx = canvas.getContext('2d');
-    if (ctx) {
-      const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
-      gradient.addColorStop(0, 'rgba(15, 8, 28, 0.7)');
-      gradient.addColorStop(0.35, 'rgba(25, 12, 40, 0.35)');
-      gradient.addColorStop(0.7, 'rgba(30, 15, 50, 0.08)');
-      gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
-      ctx.fillStyle = gradient;
-      ctx.fillRect(0, 0, 64, 64);
-    }
-    const texture = new THREE.CanvasTexture(canvas);
-    texture.minFilter = THREE.LinearFilter;
-    texture.generateMipmaps = false;
-    return texture;
-  }, []);
+// Super-lightweight zero-GPU procedural radial gradient contact shadow (Single allocation)
+const SHARED_SHADOW_TEXTURE = (() => {
+  if (typeof document === 'undefined') return null;
+  const canvas = document.createElement('canvas');
+  canvas.width = 64;
+  canvas.height = 64;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+    gradient.addColorStop(0, 'rgba(15, 8, 28, 0.7)');
+    gradient.addColorStop(0.35, 'rgba(25, 12, 40, 0.35)');
+    gradient.addColorStop(0.7, 'rgba(30, 15, 50, 0.08)');
+    gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 64, 64);
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.minFilter = THREE.LinearFilter;
+  texture.generateMipmaps = false;
+  return texture;
+})();
 
-  if (!shadowTexture) return null;
+const ZeroCostShadow: React.FC = () => {
+  if (!SHARED_SHADOW_TEXTURE) return null;
 
   return (
     <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.45, 0]}>
       <planeGeometry args={[1.4, 1.4]} />
       <meshBasicMaterial
-        map={shadowTexture}
+        map={SHARED_SHADOW_TEXTURE}
         transparent
         opacity={0.78}
         depthWrite={false}
@@ -93,6 +93,10 @@ export const MochiCanvas: React.FC<MochiCanvasProps> = ({
         onCreated={({ gl }) => {
           gl.setClearColor(0x000000, 0);
           gl.toneMapping = THREE.NoToneMapping; // Zero tone-mapping computation per pixel
+          // Automatically restore WebGL context if system triggers low-power recovery
+          gl.domElement.addEventListener('webglcontextlost', (e) => {
+            e.preventDefault();
+          }, false);
         }}
       >
         {/* Streamlined Studio Lighting (2 directional lights + 1 ambient = 50% fewer shader calculations) */}

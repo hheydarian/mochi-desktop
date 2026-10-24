@@ -79,8 +79,15 @@ const PooledModel: React.FC<PooledModelProps> = ({ modelPath, visible }) => {
   );
 };
 
-// 3D Sleep Bubble Particles that rise up and gently pop when sleeping
-const SleepBubbles: React.FC = () => {
+// 3D Sleep Bubble Particles (Single allocation, zero GPU leak)
+const SHARED_BUBBLE_GEOMETRY = new THREE.SphereGeometry(1, 8, 8);
+const SHARED_BUBBLE_MATERIAL = new THREE.MeshBasicMaterial({
+  color: '#93c5fd',
+  transparent: true,
+  opacity: 0.55,
+});
+
+const SleepBubbles: React.FC<{ visible: boolean }> = ({ visible }) => {
   const bubblesRef = useRef<THREE.Group>(null);
   const bubbleCount = 4;
   const bubbleData = useMemo(() => {
@@ -93,7 +100,7 @@ const SleepBubbles: React.FC = () => {
   }, []);
 
   useFrame((state, delta) => {
-    if (!bubblesRef.current) return;
+    if (!visible || !bubblesRef.current) return;
     const time = state.clock.elapsedTime;
     bubblesRef.current.children.forEach((child, i) => {
       const b = bubbleData[i];
@@ -105,16 +112,15 @@ const SleepBubbles: React.FC = () => {
   });
 
   return (
-    <group ref={bubblesRef}>
+    <group ref={bubblesRef} visible={visible}>
       {bubbleData.map((b, i) => (
-        <mesh key={i} scale={b.scale} position={[b.baseX, 0.28 + b.offsetY, 0]}>
-          <sphereGeometry args={[1, 10, 10]} />
-          <meshBasicMaterial
-            color="#93c5fd"
-            transparent
-            opacity={0.55}
-          />
-        </mesh>
+        <mesh
+          key={i}
+          geometry={SHARED_BUBBLE_GEOMETRY}
+          material={SHARED_BUBBLE_MATERIAL}
+          scale={b.scale}
+          position={[b.baseX, 0.28 + b.offsetY, 0]}
+        />
       ))}
     </group>
   );
@@ -171,41 +177,18 @@ export const MochiModel: React.FC<{ isHovered?: boolean }> = ({ isHovered = fals
     initGlobalCursorTracking(() => useMochiStore.getState().globalMouseTracking);
   }, []);
 
-  // Trigger V8 garbage collection and Win32 working set trim proactively
+  // Proactive working set trim 6 seconds after mount once models and shaders are resident in memory
   useEffect(() => {
-    const triggerCleanMemory = async () => {
+    const timer = setTimeout(async () => {
       try {
-        if (typeof window !== 'undefined' && 'gc' in window && typeof (window as any).gc === 'function') {
-          (window as any).gc();
-        }
         const { invoke } = await import('@tauri-apps/api/core');
         await invoke('trim_memory');
       } catch {
         // Ignore in web preview
       }
-    };
-
-    const t1 = setTimeout(triggerCleanMemory, 1800);
-    const t2 = setTimeout(triggerCleanMemory, 4000);
-    return () => {
-      clearTimeout(t1);
-      clearTimeout(t2);
-    };
+    }, 6000);
+    return () => clearTimeout(timer);
   }, []);
-
-  // When mascot falls asleep, force V8 GC and trim working set
-  useEffect(() => {
-    if (mascotState === 'sleeping') {
-      try {
-        if (typeof window !== 'undefined' && 'gc' in window && typeof (window as any).gc === 'function') {
-          (window as any).gc();
-        }
-        import('@tauri-apps/api/core').then(({ invoke }) => invoke('trim_memory'));
-      } catch {
-        // Ignore in web preview
-      }
-    }
-  }, [mascotState]);
 
   // Speed multiplier
   const speedMult = useMemo(() => {
@@ -487,20 +470,20 @@ export const MochiModel: React.FC<{ isHovered?: boolean }> = ({ isHovered = fals
         <PooledModel modelPath={MODEL_PATHS.alert} visible={activeKey === 'alert'} />
         <PooledModel modelPath={MODEL_PATHS.sleeping} visible={activeKey === 'sleeping'} />
 
-        {/* 3D Sleep Bubbles */}
-        {displayedState === 'sleeping' && <SleepBubbles />}
+        {/* 3D Sleep Bubbles (Never unmounted, zero GPU buffer allocation leak) */}
+        <SleepBubbles visible={displayedState === 'sleeping'} />
 
-        {/* Transient Sparkles on Click or Waving */}
-        {(displayedState === 'waving' || showSparkles) && (
+        {/* Transient Sparkles on Click or Waving (Pooled in scene graph, zero shader recreation) */}
+        <group visible={displayedState === 'waving' || showSparkles}>
           <Sparkles
-            count={14}
+            count={12}
             scale={1.6}
             size={2.2}
             speed={0.7}
             color="#f472b6"
             position={[0, 0.2, 0]}
           />
-        )}
+        </group>
       </group>
     </group>
   );
