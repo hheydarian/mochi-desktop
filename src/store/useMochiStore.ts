@@ -12,12 +12,16 @@ export type MascotState =
 
 export type Language = 'en' | 'fa';
 export type AnimationSpeed = 'chill' | 'normal' | 'energetic';
+export type SettingsSide = 'left' | 'right';
 
 export interface MochiStoreState {
   // Mascot & UI States
   mascotState: MascotState;
+  sleepSource: 'auto' | 'manual' | null;
   lang: Language;
   isSettingsOpen: boolean;
+  settingsSide: SettingsSide;
+  isWindowVisible: boolean;
 
   // Real-time Settings
   alwaysOnTop: boolean;
@@ -31,12 +35,13 @@ export interface MochiStoreState {
   soundEnabled: boolean;
 
   // Actions
-  setMascotState: (state: MascotState) => void;
+  setMascotState: (state: MascotState, source?: 'auto' | 'manual') => void;
   cycleMood: () => void;
   setLang: (lang: Language) => void;
   toggleLang: () => void;
   setIsSettingsOpen: (isOpen: boolean) => Promise<void>;
   toggleSettings: () => Promise<void>;
+  setWindowVisible: (visible: boolean) => void;
 
   setAlwaysOnTop: (enabled: boolean) => Promise<void>;
   toggleAlwaysOnTop: () => Promise<void>;
@@ -57,8 +62,11 @@ export const useMochiStore = create<MochiStoreState>()(
   persist(
     (set, get) => ({
       mascotState: 'idle',
+      sleepSource: null,
       lang: 'fa',
       isSettingsOpen: false,
+      settingsSide: 'left',
+      isWindowVisible: true,
 
       alwaysOnTop: true,
       showInTaskbar: true,
@@ -70,7 +78,7 @@ export const useMochiStore = create<MochiStoreState>()(
       animSpeed: 'normal',
       soundEnabled: true,
 
-      setMascotState: (state) => {
+      setMascotState: (state, source) => {
         if (get().soundEnabled && get().mascotState !== state) {
           if (state === 'sleeping') {
             soundFx.sleepChirp();
@@ -78,7 +86,10 @@ export const useMochiStore = create<MochiStoreState>()(
             soundFx.pop();
           }
         }
-        set({ mascotState: state });
+        set({
+          mascotState: state,
+          sleepSource: state === 'sleeping' ? (source || 'manual') : null,
+        });
       },
 
       cycleMood: () => {
@@ -86,7 +97,7 @@ export const useMochiStore = create<MochiStoreState>()(
         const current = get().mascotState;
         const nextIdx = (order.indexOf(current) + 1) % order.length;
         const nextState = order[nextIdx];
-        get().setMascotState(nextState);
+        get().setMascotState(nextState, 'manual');
       },
 
       setLang: (lang) => {
@@ -106,7 +117,10 @@ export const useMochiStore = create<MochiStoreState>()(
       setIsSettingsOpen: async (isOpen) => {
         try {
           const { invoke } = await import('@tauri-apps/api/core');
-          await invoke('set_settings_open', { open: isOpen });
+          const side = await invoke<string>('set_settings_open', { open: isOpen });
+          if (side === 'left' || side === 'right') {
+            set({ settingsSide: side as SettingsSide });
+          }
         } catch {
           // Ignore in web preview
         }
@@ -116,6 +130,10 @@ export const useMochiStore = create<MochiStoreState>()(
 
       toggleSettings: async () => {
         await get().setIsSettingsOpen(!get().isSettingsOpen);
+      },
+
+      setWindowVisible: (visible) => {
+        set({ isWindowVisible: visible });
       },
 
       setAlwaysOnTop: async (enabled) => {
@@ -178,6 +196,7 @@ export const useMochiStore = create<MochiStoreState>()(
           // Ignore
         }
         if (get().soundEnabled) soundFx.pop();
+        set({ isSettingsOpen: false });
       },
 
       quitApp: async () => {

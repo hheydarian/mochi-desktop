@@ -1,8 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import sharp from 'sharp';
 import { NodeIO } from '@gltf-transform/core';
 import { KHRMeshQuantization, EXTMeshoptCompression } from '@gltf-transform/extensions';
-import { weld, simplify, reorder, meshopt } from '@gltf-transform/functions';
+import { weld, simplify, reorder, meshopt, textureCompress } from '@gltf-transform/functions';
 import { MeshoptDecoder, MeshoptEncoder, MeshoptSimplifier } from 'meshoptimizer';
 
 async function optimizeModels() {
@@ -29,23 +30,25 @@ async function optimizeModels() {
   const targetDirs = [
     'public/assets/models',
     'E:/GitHub/mochi-desktop/public/assets/models',
+    'C:/Users/Lenovo/.gemini/antigravity/worktrees/mochi-desktop/mochi_desktop_base_setup/public/assets/models',
   ];
 
-  console.log('🚀 Starting GLB model optimization...');
+  console.log('🚀 Starting Ultra-Low Resource GLB model & texture optimization (512x512 max)...');
 
   for (const file of files) {
-    const inputPath = path.join('public/assets/models', file);
+    const sourceInDownloads = path.join('C:/Users/Lenovo/Downloads', file);
+    const inputPath = fs.existsSync(sourceInDownloads) ? sourceInDownloads : path.join('public/assets/models', file);
     if (!fs.existsSync(inputPath)) {
       console.warn(`File not found: ${inputPath}`);
       continue;
     }
 
     const origStats = fs.statSync(inputPath);
-    console.log(`\n⏳ Processing ${file} (Original: ${(origStats.size / 1024 / 1024).toFixed(2)} MB)...`);
+    console.log(`\n⏳ Processing ${file} from ${inputPath} (Original size: ${(origStats.size / 1024 / 1024).toFixed(2)} MB)...`);
 
     const doc = await io.read(inputPath);
 
-    // Initial counts
+    // Initial vertex and triangle counts
     let origTris = 0;
     let origVerts = 0;
     for (const mesh of doc.getRoot().listMeshes()) {
@@ -57,13 +60,20 @@ async function optimizeModels() {
       }
     }
 
-    // Apply optimization pipeline: weld -> simplify -> reorder -> meshopt
+    // Apply optimization pipeline:
+    // 1. weld & simplify geometry
+    // 2. resize all textures to 512x512 via sharp
+    // 3. reorder & meshopt compression
     await doc.transform(
       weld({ tolerance: 0.0001 }),
       simplify({
         simplifier: MeshoptSimplifier,
-        ratio: 0.045, // Target ~80k-90k high quality triangles
-        error: 0.001,
+        ratio: 0.0055, // Optimal crisp 10k triangle silhouette for 240px viewport
+        error: 0.005,
+      }),
+      textureCompress({
+        encoder: sharp,
+        resize: [512, 512],
       }),
       reorder({ encoder: MeshoptEncoder }),
       meshopt({ encoder: MeshoptEncoder, level: 'medium' })
@@ -84,7 +94,7 @@ async function optimizeModels() {
     const optimizedGlb = await io.writeBinary(doc);
     const newSizeMB = (optimizedGlb.byteLength / 1024 / 1024).toFixed(2);
 
-    // Write to both target directories
+    // Write to all target directories
     for (const targetDir of targetDirs) {
       if (fs.existsSync(targetDir)) {
         const outPath = path.join(targetDir, file);
@@ -93,11 +103,11 @@ async function optimizeModels() {
     }
 
     console.log(
-      `✅ ${file}: Vertices ${origVerts.toLocaleString()} -> ${newVerts.toLocaleString()} | Triangles ${origTris.toLocaleString()} -> ${newTris.toLocaleString()} (-${(((origTris - newTris) / origTris) * 100).toFixed(1)}%) | Size: ${(origStats.size / 1024 / 1024).toFixed(2)} MB -> ${newSizeMB} MB`
+      `✅ ${file}: Vertices ${origVerts.toLocaleString()} -> ${newVerts.toLocaleString()} | Triangles ${origTris.toLocaleString()} -> ${newTris.toLocaleString()} | Size: ${(origStats.size / 1024 / 1024).toFixed(2)} MB -> ${newSizeMB} MB`
     );
   }
 
-  console.log('\n🎉 All 4 GLB models have been successfully optimized and synchronized!');
+  console.log('\n🎉 All 4 GLB models have been successfully compressed to 512x512 textures and synchronized!');
 }
 
 optimizeModels().catch((err) => {

@@ -9,7 +9,10 @@ export const App: React.FC = () => {
     setMascotState,
     isSettingsOpen,
     setIsSettingsOpen,
+    toggleSettings,
     toggleAlwaysOnTop,
+    setWindowVisible,
+    settingsSide,
   } = useMochiStore();
 
   const [isHovered, setIsHovered] = useState(false);
@@ -35,17 +38,27 @@ export const App: React.FC = () => {
           await win.setPosition(new PhysicalPosition(x, y));
         }
       } catch {
-        // Not in Tauri runtime (e.g. browser preview)
+        // Not in Tauri runtime
       }
     };
 
     dockToBottomRight();
   }, []);
 
-  // 2. Tauri Tray Menu Event Listeners
+  // 2. Global Context Menu Suppression: Disable browser right-click menu (Save image as, inspect, etc.)
+  useEffect(() => {
+    const disableContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+    };
+    window.addEventListener('contextmenu', disableContextMenu, { capture: true });
+    return () => window.removeEventListener('contextmenu', disableContextMenu, { capture: true });
+  }, []);
+
+  // 3. Tauri Tray Menu & Visibility Event Listeners
   useEffect(() => {
     let unlistenSettings: (() => void) | undefined;
     let unlistenPin: (() => void) | undefined;
+    let unlistenVisibility: (() => void) | undefined;
 
     const setupTrayListeners = async () => {
       try {
@@ -55,6 +68,9 @@ export const App: React.FC = () => {
         });
         unlistenPin = await listen('toggle-always-on-top', () => {
           toggleAlwaysOnTop();
+        });
+        unlistenVisibility = await listen<boolean>('window-visibility-changed', (event) => {
+          setWindowVisible(event.payload);
         });
       } catch {
         // Not in Tauri runtime
@@ -66,10 +82,11 @@ export const App: React.FC = () => {
     return () => {
       if (unlistenSettings) unlistenSettings();
       if (unlistenPin) unlistenPin();
+      if (unlistenVisibility) unlistenVisibility();
     };
-  }, [setIsSettingsOpen, toggleAlwaysOnTop]);
+  }, [setIsSettingsOpen, toggleAlwaysOnTop, setWindowVisible]);
 
-  // 3. Tauri v2 native file drop listener
+  // 4. Tauri v2 native file drop listener
   useEffect(() => {
     let unlisten: (() => void) | undefined;
 
@@ -105,7 +122,7 @@ export const App: React.FC = () => {
     };
   }, [setMascotState]);
 
-  // 4. Window drag interaction: hold left-click and drag anywhere on Mochi to move window
+  // 5. Window drag interaction: hold left-click and drag anywhere on Mochi to move window
   const handlePointerDown = (e: React.PointerEvent) => {
     if (e.button === 0 && !isSettingsOpen) {
       pointerStartRef.current = { x: e.clientX, y: e.clientY };
@@ -132,7 +149,21 @@ export const App: React.FC = () => {
     pointerStartRef.current = null;
   };
 
-  // 5. Web fallback drag & drop
+  // Fail-Safe Close: Clicking Mochi while settings is open toggles it closed
+  const handleMascotClick = () => {
+    if (isSettingsOpen) {
+      setIsSettingsOpen(false);
+    }
+  };
+
+  // Right-clicking on Mochi opens/closes the settings modal
+  const handleMascotContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    toggleSettings();
+  };
+
+  // 6. Web fallback drag & drop
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -171,24 +202,35 @@ export const App: React.FC = () => {
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
       className={`relative w-screen h-screen bg-transparent overflow-hidden select-none flex items-center ${
-        isSettingsOpen ? 'justify-end pr-1' : 'justify-center'
+        !isSettingsOpen
+          ? 'justify-center'
+          : settingsSide === 'right'
+          ? 'flex-row justify-start pl-1'
+          : 'flex-row justify-end pr-1'
       }`}
       style={{
         background: 'transparent',
         backgroundColor: 'transparent',
       }}
     >
-      {/* Side-by-Side: Left Column for Settings Panel */}
-      {isSettingsOpen && (
+      {/* If settings is on the left of Mochi */}
+      {isSettingsOpen && settingsSide === 'left' && (
         <div className="flex-1 h-full flex items-center justify-center pl-2">
           <SettingsModal />
         </div>
       )}
 
-      {/* Mascot Viewport (Fixed at 240x260 in normal mode or on the right in expanded mode) */}
-      <div className="relative w-[240px] h-[260px] flex items-center justify-center flex-shrink-0">
-        {/* Real 3D Floating Mochi Mascot */}
-        <MochiCanvas />
+      {/* Mascot Viewport (Fixed at 240x260 in normal mode or on the right/left in expanded mode) */}
+      <div
+        onContextMenu={handleMascotContextMenu}
+        className="relative w-[240px] h-[260px] flex items-center justify-center flex-shrink-0"
+      >
+        {/* Real 3D Floating Mochi Mascot with Object Pooling & Damped Interpolation */}
+        <MochiCanvas
+          isHovered={isHovered}
+          onMascotClick={handleMascotClick}
+          onContextMenu={handleMascotContextMenu}
+        />
 
         {/* Radial Orbital Glass Menu (Appears strictly on Hover when Settings is closed) */}
         <RadialOrbitalMenu isVisible={isHovered && !isSettingsOpen} />
@@ -196,6 +238,13 @@ export const App: React.FC = () => {
         {/* Drag & Drop Feedback Overlay */}
         <DropOverlay isDragging={isDraggingFile || mascotState === 'dragOver'} />
       </div>
+
+      {/* If settings is on the right of Mochi (when Mochi was docked on the left screen edge) */}
+      {isSettingsOpen && settingsSide === 'right' && (
+        <div className="flex-1 h-full flex items-center justify-center pr-2">
+          <SettingsModal />
+        </div>
+      )}
     </div>
   );
 };

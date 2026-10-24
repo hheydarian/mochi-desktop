@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   X,
@@ -16,6 +16,9 @@ import {
   Pin,
   RotateCcw,
   Power,
+  ChevronDown,
+  Smile,
+  Bell,
 } from 'lucide-react';
 import { useMochiStore } from '../../store/useMochiStore';
 import { useTranslation } from '../../locales';
@@ -72,6 +75,8 @@ export const SettingsModal: React.FC = () => {
   const {
     isSettingsOpen,
     setIsSettingsOpen,
+    mascotState,
+    setMascotState,
     alwaysOnTop,
     setAlwaysOnTop,
     showInTaskbar,
@@ -97,13 +102,25 @@ export const SettingsModal: React.FC = () => {
   const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState<'appearance' | 'behavior' | 'window'>('appearance');
 
+  // Fail-Safe Close 1: Escape key closes settings instantly
+  useEffect(() => {
+    if (!isSettingsOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsSettingsOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isSettingsOpen, setIsSettingsOpen]);
+
   if (!isSettingsOpen) return null;
 
   return (
     <motion.div
-      initial={{ opacity: 0, x: -30, scale: 0.95 }}
-      animate={{ opacity: 1, x: 0, scale: 1 }}
-      exit={{ opacity: 0, x: -20, scale: 0.95 }}
+      initial={{ opacity: 0, scale: 0.92, y: 8 }}
+      animate={{ opacity: 1, scale: 1, y: 0 }}
+      exit={{ opacity: 0, scale: 0.92, y: 8 }}
       transition={{ type: 'spring', damping: 22, stiffness: 320 }}
       className="w-[316px] h-[340px] bg-slate-950/85 backdrop-blur-2xl border border-white/15 rounded-3xl shadow-2xl p-3.5 flex flex-col justify-between select-none text-white overflow-hidden pointer-events-auto"
       style={{ scrollbarWidth: 'none' }}
@@ -128,6 +145,7 @@ export const SettingsModal: React.FC = () => {
           type="button"
           onClick={() => setIsSettingsOpen(false)}
           className="w-6 h-6 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white/70 hover:text-white transition-colors cursor-pointer"
+          title="Esc"
         >
           <X className="w-3.5 h-3.5" />
         </button>
@@ -175,7 +193,7 @@ export const SettingsModal: React.FC = () => {
         </button>
       </div>
 
-      {/* 3. Tab Content Area (Compact, perfectly fitted, zero scrollbar) */}
+      {/* 3. Tab Content Area (Zero scrollbar, strictly compact) */}
       <div className="flex-1 flex flex-col justify-center py-1">
         <AnimatePresence mode="wait">
           {activeTab === 'appearance' && (
@@ -274,6 +292,41 @@ export const SettingsModal: React.FC = () => {
               transition={{ duration: 0.15 }}
               className="space-y-1.5"
             >
+              {/* 4 Moods / Mascot States Interactive Selector */}
+              <div className="p-2 rounded-xl bg-white/[0.04] border border-white/[0.06] space-y-1">
+                <div className="flex justify-between items-center text-white/80">
+                  <span className="flex items-center gap-1.5 text-[10px] font-medium">
+                    <Sparkles className="w-3 h-3 text-pink-300" />
+                    {lang === 'fa' ? 'حالت و انیمیشن موچی' : 'Mascot Mood'}
+                  </span>
+                  <span className="text-[9px] text-pink-300 font-semibold font-mono">
+                    {t.mascot.state[mascotState]}
+                  </span>
+                </div>
+                <div className="grid grid-cols-4 gap-1 bg-black/30 p-0.5 rounded-lg border border-white/10">
+                  {[
+                    { key: 'idle', labelFa: 'آماده', labelEn: 'Idle', icon: <Smile className="w-3 h-3" /> },
+                    { key: 'waving', labelFa: 'دست‌تکان', labelEn: 'Wave', icon: <Sparkles className="w-3 h-3" /> },
+                    { key: 'alert', labelFa: 'هوشیار', labelEn: 'Alert', icon: <Bell className="w-3 h-3" /> },
+                    { key: 'sleeping', labelFa: 'خواب', labelEn: 'Sleep', icon: <Moon className="w-3 h-3" /> },
+                  ].map((item) => (
+                    <button
+                      key={item.key}
+                      type="button"
+                      onClick={() => setMascotState(item.key as any, 'manual')}
+                      className={`py-1 rounded text-[9px] font-medium transition-all flex items-center justify-center gap-1 ${
+                        mascotState === item.key
+                          ? 'bg-pink-500 text-white shadow-sm font-bold'
+                          : 'text-white/60 hover:text-white hover:bg-white/[0.06]'
+                      }`}
+                    >
+                      {item.icon}
+                      <span>{lang === 'fa' ? item.labelFa : item.labelEn}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <CapsuleToggle
                 icon={<Compass className="w-3.5 h-3.5 text-sky-300" />}
                 title={t.settings.globalCursor}
@@ -362,7 +415,7 @@ export const SettingsModal: React.FC = () => {
                 <button
                   type="button"
                   onClick={resetPosition}
-                  className="flex-1 py-2 px-2 rounded-xl bg-white/10 hover:bg-white/15 border border-white/15 text-white/90 flex items-center justify-center gap-1.5 font-medium transition-all cursor-pointer text-[10px]"
+                  className="flex-1 py-1.5 px-2 rounded-xl bg-white/10 hover:bg-white/15 border border-white/15 text-white/90 flex items-center justify-center gap-1.5 font-medium transition-all cursor-pointer text-[10px]"
                 >
                   <RotateCcw className="w-3 h-3 text-amber-300" />
                   <span className="truncate">{t.settings.resetPosition}</span>
@@ -370,7 +423,7 @@ export const SettingsModal: React.FC = () => {
                 <button
                   type="button"
                   onClick={quitApp}
-                  className="py-2 px-3 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 border border-rose-400/30 text-rose-300 flex items-center justify-center gap-1.5 font-medium transition-all cursor-pointer text-[10px]"
+                  className="py-1.5 px-3 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 border border-rose-400/30 text-rose-300 flex items-center justify-center gap-1.5 font-medium transition-all cursor-pointer text-[10px]"
                 >
                   <Power className="w-3 h-3 text-rose-400" />
                   <span className="truncate">{t.settings.quit}</span>
@@ -379,6 +432,18 @@ export const SettingsModal: React.FC = () => {
             </motion.div>
           )}
         </AnimatePresence>
+      </div>
+
+      {/* 4. Fail-Safe Close Button 3 in Footer */}
+      <div className="pt-2 border-t border-white/10">
+        <button
+          type="button"
+          onClick={() => setIsSettingsOpen(false)}
+          className="w-full py-1.5 rounded-xl bg-white/[0.08] hover:bg-white/[0.14] border border-white/10 text-white/80 hover:text-white flex items-center justify-center gap-1 text-[10px] font-medium transition-all cursor-pointer"
+        >
+          <ChevronDown className="w-3.5 h-3.5 text-pink-300" />
+          <span>{lang === 'fa' ? 'بستن پنل تنظیمات (Esc)' : 'Close Settings Panel (Esc)'}</span>
+        </button>
       </div>
     </motion.div>
   );

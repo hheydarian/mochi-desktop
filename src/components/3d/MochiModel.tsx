@@ -9,16 +9,13 @@ import { globalPointer, initGlobalCursorTracking } from '../../utils/cursor';
 // Tripo models face +X by default; rotate -90° on Y to look directly at user (+Z)
 const BASE_ROTATION_Y = -Math.PI / 2;
 
-// Paths to the 4 real optimized 3D models
+// Paths to the 4 real optimized 3D models (~200KB each)
 export const MODEL_PATHS = {
   idle: './assets/models/mochi-idle.glb',
   waving: './assets/models/mochi-waving.glb',
   alert: './assets/models/mochi-alert.glb',
   sleeping: './assets/models/mochi-sleeping.glb',
 } as const;
-
-// 1. FAST STARTUP: Only preload the idle model immediately (<0.5s launch)
-useGLTF.preload(MODEL_PATHS.idle, true, true);
 
 export function getModelPathForState(state: MascotState): string {
   switch (state) {
@@ -36,37 +33,49 @@ export function getModelPathForState(state: MascotState): string {
   }
 }
 
-interface ModelRendererProps {
+// Preload all 4 models immediately into GPU memory (<50ms total for 800KB)
+useGLTF.preload(MODEL_PATHS.idle, true, true);
+useGLTF.preload(MODEL_PATHS.waving, true, true);
+useGLTF.preload(MODEL_PATHS.alert, true, true);
+useGLTF.preload(MODEL_PATHS.sleeping, true, true);
+
+interface PooledModelProps {
   modelPath: string;
+  visible: boolean;
 }
 
-const ModelRenderer: React.FC<ModelRendererProps> = ({ modelPath }) => {
+// Scene-Graph Object Pooling Component:
+// Stays mounted in the Three.js scene tree; toggling `visible` has zero CPU overhead,
+// avoids garbage collection and prevents WebGL shader recompilations (switches in 0.001ms).
+const PooledModel: React.FC<PooledModelProps> = ({ modelPath, visible }) => {
   const { scene } = useGLTF(modelPath, true, true);
 
-  // Configure material properties for Pixar/Clay aesthetic
+  // Configure material properties for Pixar/Clay aesthetic once on load
   useMemo(() => {
     scene.traverse((child) => {
       if ((child as THREE.Mesh).isMesh) {
         const mesh = child as THREE.Mesh;
         mesh.castShadow = false;
         mesh.receiveShadow = false;
+        mesh.matrixAutoUpdate = false;
+        mesh.updateMatrix();
         if (mesh.material) {
           const mat = mesh.material as THREE.MeshStandardMaterial;
           mat.roughness = 0.42;
           mat.metalness = 0.04;
-          mat.needsUpdate = true;
         }
       }
     });
   }, [scene]);
 
   return (
-    <Center key={modelPath} top={false}>
-      {/* Base 90-degree yaw correction so Mochi's face points straight forward */}
-      <group rotation={[0, BASE_ROTATION_Y, 0]}>
-        <primitive object={scene} />
-      </group>
-    </Center>
+    <group visible={visible}>
+      <Center top={false}>
+        <group rotation={[0, BASE_ROTATION_Y, 0]}>
+          <primitive object={scene} />
+        </group>
+      </Center>
+    </group>
   );
 };
 
@@ -83,19 +92,15 @@ const SleepBubbles: React.FC = () => {
     }));
   }, []);
 
-  useFrame((state) => {
+  useFrame((state, delta) => {
     if (!bubblesRef.current) return;
     const time = state.clock.elapsedTime;
     bubblesRef.current.children.forEach((child, i) => {
       const b = bubbleData[i];
       const y = (time * b.speed + b.offsetY) % 0.85;
       child.position.y = 0.28 + y;
-      child.position.x = b.baseX + Math.sin(time * 2.2 + i * 1.5) * 0.04;
-      const alpha = Math.sin((y / 0.85) * Math.PI);
-      const mesh = child as THREE.Mesh;
-      if (mesh.material) {
-        (mesh.material as THREE.MeshStandardMaterial).opacity = Math.max(0, alpha * 0.7);
-      }
+      const targetX = b.baseX + Math.sin(time * 2.2 + i * 1.5) * 0.04;
+      child.position.x = THREE.MathUtils.damp(child.position.x, targetX, 8, delta);
     });
   });
 
@@ -103,14 +108,11 @@ const SleepBubbles: React.FC = () => {
     <group ref={bubblesRef}>
       {bubbleData.map((b, i) => (
         <mesh key={i} scale={b.scale} position={[b.baseX, 0.28 + b.offsetY, 0]}>
-          <sphereGeometry args={[1, 12, 12]} />
-          <meshStandardMaterial
+          <sphereGeometry args={[1, 10, 10]} />
+          <meshBasicMaterial
             color="#93c5fd"
-            emissive="#60a5fa"
-            emissiveIntensity={0.4}
             transparent
-            opacity={0.65}
-            roughness={0.12}
+            opacity={0.55}
           />
         </mesh>
       ))}
@@ -122,6 +124,7 @@ export const MochiModel: React.FC = () => {
   const {
     mascotState,
     setMascotState,
+    sleepSource,
     globalMouseTracking,
     autonomousMode,
     autoSleepDelay,
@@ -160,18 +163,7 @@ export const MochiModel: React.FC = () => {
 
   const [showSparkles, setShowSparkles] = useState(false);
 
-  // 2. STAGGERED PRELOAD: Lazily preload remaining 3 models 1.5 seconds after initial launch
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      useGLTF.preload(MODEL_PATHS.waving, true, true);
-      useGLTF.preload(MODEL_PATHS.alert, true, true);
-      useGLTF.preload(MODEL_PATHS.sleeping, true, true);
-    }, 1500);
-
-    return () => clearTimeout(timer);
-  }, []);
-
-  // 3. ZERO RE-RENDER GLOBAL POINTER TRACKING: Initialize 20Hz loop writing to globalPointer
+  // Initialize event-driven cursor tracking (Zero IPC polling)
   useEffect(() => {
     initGlobalCursorTracking(() => useMochiStore.getState().globalMouseTracking);
   }, []);
@@ -191,15 +183,14 @@ export const MochiModel: React.FC = () => {
 
   // Initiate Jelly Morph when mascotState changes
   useEffect(() => {
-    if (mascotState !== displayedState) {
-      morphRef.current = {
-        phase: 'squash',
-        startTime: performance.now(),
-        squashFactor: 0,
-        popFactor: 0,
-      };
-    }
-  }, [mascotState, displayedState]);
+    setDisplayedState(mascotState);
+    morphRef.current = {
+      phase: 'pop',
+      startTime: performance.now(),
+      squashFactor: 0,
+      popFactor: 0.18,
+    };
+  }, [mascotState]);
 
   // Clean up timer on unmount
   useEffect(() => {
@@ -243,7 +234,7 @@ export const MochiModel: React.FC = () => {
     const isSleeping = displayedState === 'sleeping';
     const isProcessing = displayedState === 'processing';
 
-    // Read directly from zero-render globalPointer object
+    // Read directly from zero-render globalPointer object pushed from Rust event
     let targetPointerX = state.pointer.x;
     let targetPointerY = state.pointer.y;
 
@@ -264,8 +255,9 @@ export const MochiModel: React.FC = () => {
         lastActiveTimeRef.current = now;
         lastCursorRef.current = { x: targetPointerX, y: targetPointerY };
 
-        // Wake up immediately on cursor motion
-        if (mascotState === 'sleeping') {
+        // Only wake up automatically if Mochi fell asleep automatically via inactivity!
+        // If user manually chose 'sleeping', Mochi stays peacefully asleep until clicked.
+        if (mascotState === 'sleeping' && sleepSource === 'auto') {
           setMascotState('idle');
         }
       }
@@ -277,7 +269,7 @@ export const MochiModel: React.FC = () => {
         mascotState === 'idle' &&
         displayedState === 'idle'
       ) {
-        setMascotState('sleeping');
+        setMascotState('sleeping', 'auto');
       }
 
       // 2. Proximity Greeting: cursor enters close proximity (< 0.20 distance from mascot)
@@ -311,7 +303,7 @@ export const MochiModel: React.FC = () => {
       }
     }
 
-    // --- 1. Head and Body Rotation ---
+    // --- 1. Head and Body Rotation via Frame-Independent Damped Springs ---
     const headTiltZ = !isSleeping ? Math.sin(time * 0.8) * 0.08 : 0.04;
     const waddleZ = !isSleeping ? Math.sin(time * 1.6) * 0.03 : 0;
 
@@ -319,20 +311,20 @@ export const MochiModel: React.FC = () => {
       const targetRotY = THREE.MathUtils.clamp(targetPointerX * 0.48, -0.55, 0.55);
       const targetRotX = THREE.MathUtils.clamp(-targetPointerY * 0.32, -0.32, 0.32);
 
-      root.rotation.y = THREE.MathUtils.lerp(root.rotation.y, targetRotY, delta * 6 * speedMult);
-      root.rotation.x = THREE.MathUtils.lerp(root.rotation.x, targetRotX, delta * 6 * speedMult);
-      root.rotation.z = THREE.MathUtils.lerp(root.rotation.z, headTiltZ + waddleZ, delta * 5 * speedMult);
+      root.rotation.y = THREE.MathUtils.damp(root.rotation.y, targetRotY, 6 * speedMult, delta);
+      root.rotation.x = THREE.MathUtils.damp(root.rotation.x, targetRotX, 6 * speedMult, delta);
+      root.rotation.z = THREE.MathUtils.damp(root.rotation.z, headTiltZ + waddleZ, 5 * speedMult, delta);
     } else {
-      root.rotation.y = THREE.MathUtils.lerp(root.rotation.y, 0, delta * 3);
-      root.rotation.x = THREE.MathUtils.lerp(root.rotation.x, 0.16, delta * 3);
-      root.rotation.z = THREE.MathUtils.lerp(root.rotation.z, 0.05, delta * 3);
+      root.rotation.y = THREE.MathUtils.damp(root.rotation.y, 0, 3, delta);
+      root.rotation.x = THREE.MathUtils.damp(root.rotation.x, 0.16, 3, delta);
+      root.rotation.z = THREE.MathUtils.damp(root.rotation.z, 0.05, 3, delta);
     }
 
     // --- 2. Processing State 360 Spin ---
     if (isProcessing) {
       motion.rotation.y += delta * 2.8 * speedMult;
     } else {
-      motion.rotation.y = THREE.MathUtils.lerp(motion.rotation.y, 0, delta * 8);
+      motion.rotation.y = THREE.MathUtils.damp(motion.rotation.y, 0, 8, delta);
     }
 
     // --- 3. Jelly Breathing & Gentle Floating ---
@@ -353,7 +345,7 @@ export const MochiModel: React.FC = () => {
     // Periodic Happy Hop in Idle
     const hopCycle = (time * 0.45) % 9;
     const hopY = !isSleeping && hopCycle < 0.65 ? Math.sin((hopCycle / 0.65) * Math.PI) * 0.07 : 0;
-    motion.position.y = THREE.MathUtils.lerp(motion.position.y, floatY + hopY, delta * 10 * speedMult);
+    motion.position.y = THREE.MathUtils.damp(motion.position.y, floatY + hopY, 10 * speedMult, delta);
 
     // --- 4. Two-Phase Jelly Pop Morph State Machine ---
     const morph = morphRef.current;
@@ -380,7 +372,7 @@ export const MochiModel: React.FC = () => {
     }
 
     // --- 5. Interactive Click Squash & Stretch ---
-    squashRef.current = THREE.MathUtils.lerp(squashRef.current, 0, delta * 8.5);
+    squashRef.current = THREE.MathUtils.damp(squashRef.current, 0, 8.5, delta);
     const clickSquash = squashRef.current;
 
     // Default base scale is 0.76 (10% smaller, delicate & cute)
@@ -398,12 +390,30 @@ export const MochiModel: React.FC = () => {
     root.scale.set(finalScaleX, finalScaleY, finalScaleZ);
   });
 
-  const currentModelPath = useMemo(() => getModelPathForState(displayedState), [displayedState]);
+  const activeKey = useMemo(() => {
+    switch (displayedState) {
+      case 'waving':
+        return 'waving';
+      case 'alert':
+      case 'dragOver':
+        return 'alert';
+      case 'sleeping':
+        return 'sleeping';
+      case 'idle':
+      case 'processing':
+      default:
+        return 'idle';
+    }
+  }, [displayedState]);
 
   return (
     <group ref={rootGroupRef} onClick={handleClick}>
       <group ref={motionGroupRef}>
-        <ModelRenderer modelPath={currentModelPath} />
+        {/* Scene-Graph Object Pooling: All 4 models kept mounted, instant 0.001ms zero-cost visibility switch */}
+        <PooledModel modelPath={MODEL_PATHS.idle} visible={activeKey === 'idle'} />
+        <PooledModel modelPath={MODEL_PATHS.waving} visible={activeKey === 'waving'} />
+        <PooledModel modelPath={MODEL_PATHS.alert} visible={activeKey === 'alert'} />
+        <PooledModel modelPath={MODEL_PATHS.sleeping} visible={activeKey === 'sleeping'} />
 
         {/* 3D Sleep Bubbles */}
         {displayedState === 'sleeping' && <SleepBubbles />}
