@@ -395,13 +395,8 @@ export const App: React.FC = () => {
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
-      className={`relative w-screen h-screen bg-transparent overflow-hidden select-none flex items-end ${
-        !isModalOpen
-          ? 'justify-end'
-          : settingsSide === 'right'
-          ? 'flex-row-reverse justify-end p-2 gap-2.5'
-          : 'flex-row justify-end p-2 gap-2.5'
-      }`}
+      dir="ltr"
+      className="relative w-screen h-screen bg-transparent overflow-hidden select-none"
       style={{
         background: 'transparent',
         backgroundColor: 'transparent',
@@ -409,7 +404,11 @@ export const App: React.FC = () => {
     >
       {/* Side Panel for SettingsModal or TimeCapsuleModal when explicitly opened */}
       {isModalOpen && (
-        <div className="flex-1 h-full flex items-center justify-center pointer-events-auto">
+        <div
+          className={`absolute bottom-3 ${
+            settingsSide === 'right' ? 'right-3' : 'left-3'
+          } w-[390px] h-[454px] flex items-center justify-center pointer-events-auto z-40`}
+        >
           <Suspense fallback={null}>
             {isSettingsOpen ? <SettingsModal /> : <TimeCapsuleModal />}
           </Suspense>
@@ -419,7 +418,9 @@ export const App: React.FC = () => {
       {/* Mascot Viewport (Fixed at 200x230 - NEVER resizes or shifts camera aspect ratio!) */}
       <div
         onContextMenu={handleMascotContextMenu}
-        className="relative w-[200px] h-[230px] flex items-center justify-center flex-shrink-0 pointer-events-auto"
+        className={`absolute bottom-2 ${
+          settingsSide === 'right' ? 'left-2' : 'right-2'
+        } w-[200px] h-[230px] flex items-center justify-center flex-shrink-0 pointer-events-auto z-30`}
       >
         {/* Real 3D Floating Mochi Mascot */}
         <MochiCanvas

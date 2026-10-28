@@ -150,8 +150,8 @@ fn set_settings_open(window: tauri::Window, open: bool) -> Result<String, String
 
     let base_w = (320.0 * scale) as i32;
     let base_h = (280.0 * scale) as i32;
-    let exp_w = (560.0 * scale) as i32;
-    let exp_h = (340.0 * scale) as i32;
+    let exp_w = (620.0 * scale) as i32;
+    let exp_h = (480.0 * scale) as i32;
 
     let delta_w = exp_w - base_w;
     let delta_h = exp_h - base_h;
@@ -248,8 +248,8 @@ fn reset_window_position(window: tauri::Window) -> Result<(), String> {
 
     let base_w = (320.0 * scale) as i32;
     let base_h = (280.0 * scale) as i32;
-    let margin_x = (4.0 * scale) as i32;
-    let margin_y = (4.0 * scale) as i32;
+    let margin_x = (28.0 * scale) as i32;
+    let margin_y = (64.0 * scale) as i32;
     let x = screen_size.width as i32 - base_w - margin_x;
     let y = screen_size.height as i32 - base_h - margin_y;
 
@@ -394,8 +394,8 @@ pub fn run() {
                     let scale_factor = monitor.scale_factor();
                     let win_width = (320.0 * scale_factor) as i32;
                     let win_height = (280.0 * scale_factor) as i32;
-                    let margin_x = (4.0 * scale_factor) as i32;
-                    let margin_y = (4.0 * scale_factor) as i32;
+                    let margin_x = (28.0 * scale_factor) as i32;
+                    let margin_y = (64.0 * scale_factor) as i32;
                     let x = screen_size.width as i32 - win_width - margin_x;
                     let y = screen_size.height as i32 - win_height - margin_y;
                     let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x, y }));
