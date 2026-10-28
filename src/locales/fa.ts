@@ -9,6 +9,7 @@ export interface TranslationSchema {
       waving: string;
       alert: string;
       sleeping: string;
+      dizzy: string;
       dragOver: string;
       processing: string;
     };
@@ -94,6 +95,7 @@ export const fa: TranslationSchema = {
       waving: 'خوش‌آمدگویی',
       alert: 'هوشیار و گوش به زنگ',
       sleeping: 'خوابیده',
+      dizzy: 'گیج و سرگیجه',
       dragOver: 'فایل را رها کنید!',
       processing: 'در حال پردازش...',
     },

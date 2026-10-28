@@ -28,6 +28,7 @@ export interface SpeechBubbleAction {
   onClick: () => void;
   isPrimary?: boolean;
   isDanger?: boolean;
+  variant?: 'primary' | 'secondary' | 'danger';
 }
 
 export interface SpeechBubbleMessage {
@@ -83,6 +84,7 @@ export interface MochiStoreState {
   toggleLang: () => void;
   setIsSettingsOpen: (isOpen: boolean) => Promise<void>;
   toggleSettings: () => Promise<void>;
+  setSettingsSide: (side: SettingsSide) => void;
   setWindowVisible: (visible: boolean) => void;
 
   setAlwaysOnTop: (enabled: boolean) => Promise<void>;
@@ -105,6 +107,7 @@ export interface MochiStoreState {
   setRadioVolume: (vol: number) => void;
   setVitalsThreshold: (threshold: number) => void;
   setSystemVitals: (vitals: { memoryPercent: number; cpuPercent: number; topProcess: string }) => void;
+  setIsHighSystemLoad: (isHigh: boolean) => void;
 
   showSpeechBubble: (message: SpeechBubbleMessage) => void;
   hideSpeechBubble: () => void;
@@ -207,6 +210,10 @@ export const useMochiStore = create<MochiStoreState>()(
 
       toggleSettings: async () => {
         await get().setIsSettingsOpen(!get().isSettingsOpen);
+      },
+
+      setSettingsSide: (side) => {
+        set({ settingsSide: side });
       },
 
       setWindowVisible: (visible) => {
@@ -314,6 +321,10 @@ export const useMochiStore = create<MochiStoreState>()(
           systemVitals: vitals,
           isHighSystemLoad: isHigh,
         });
+      },
+
+      setIsHighSystemLoad: (isHigh) => {
+        set({ isHighSystemLoad: isHigh });
       },
 
       showSpeechBubble: (message) => {

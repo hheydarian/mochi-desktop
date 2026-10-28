@@ -66,14 +66,14 @@ const CapsuleToggle: React.FC<CapsuleToggleProps> = ({
         </div>
       </div>
       <div
-        className={`w-8 h-4.5 rounded-full p-0.5 transition-colors flex-shrink-0 flex items-center ${
+        className={`w-9 h-5 rounded-full p-0.5 transition-colors flex-shrink-0 flex items-center ${
           checked ? 'bg-pink-500' : 'bg-white/20'
         }`}
       >
         <motion.div
-          animate={{ x: checked ? 14 : 0 }}
-          transition={{ type: 'spring', stiffness: 500, damping: 30 }}
-          className="w-3.5 h-3.5 rounded-full bg-white shadow-sm"
+          animate={{ x: checked ? 16 : 0 }}
+          transition={{ type: 'spring', stiffness: 500, damping: 32 }}
+          className="w-4 h-4 rounded-full bg-white shadow-sm"
         />
       </div>
     </div>
@@ -144,11 +144,11 @@ export const SettingsModal: React.FC = () => {
       animate={{ opacity: 1, scale: 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.92, y: 8 }}
       transition={{ type: 'spring', damping: 22, stiffness: 320 }}
-      className="w-[316px] h-[340px] bg-slate-950/85 backdrop-blur-2xl border border-white/15 rounded-3xl shadow-2xl p-3.5 flex flex-col justify-between select-none text-white overflow-hidden pointer-events-auto"
+      className="w-[310px] h-[340px] bg-slate-950/90 backdrop-blur-2xl border border-white/15 rounded-3xl shadow-2xl p-3 flex flex-col justify-between select-none text-white overflow-hidden pointer-events-auto"
       style={{ scrollbarWidth: 'none' }}
     >
       {/* 1. Header with Close Button */}
-      <div className="flex items-center justify-between pb-2 border-b border-white/10">
+      <div className="flex items-center justify-between pb-1.5 border-b border-white/10">
         <div className="flex items-center gap-2">
           <div className="w-6 h-6 rounded-lg bg-pink-500/20 border border-pink-400/40 flex items-center justify-center text-pink-300">
             <Sparkles className="w-3.5 h-3.5" />
@@ -174,57 +174,57 @@ export const SettingsModal: React.FC = () => {
       </div>
 
       {/* 2. Four Top Navigation Tabs */}
-      <div className="grid grid-cols-4 gap-1 bg-black/40 p-0.5 rounded-xl border border-white/10 my-1.5">
+      <div className="grid grid-cols-4 gap-1 bg-black/40 p-0.5 rounded-xl border border-white/10 my-1">
         <button
           type="button"
           onClick={() => setActiveTab('appearance')}
-          className={`py-1 px-1 rounded-lg text-[9px] font-medium flex items-center justify-center gap-1 transition-all ${
+          className={`py-1.5 px-0.5 rounded-lg text-[10px] font-medium flex items-center justify-center gap-1 transition-all ${
             activeTab === 'appearance'
-              ? 'bg-pink-500 text-white shadow-sm'
+              ? 'bg-pink-500 text-white shadow-sm font-semibold'
               : 'text-white/60 hover:text-white/90'
           }`}
         >
-          <Palette className="w-2.5 h-2.5" />
-          <span>{t.settings.tabAppearance}</span>
+          <Palette className="w-3 h-3 flex-shrink-0" />
+          <span className="truncate">{t.settings.tabAppearance}</span>
         </button>
 
         <button
           type="button"
           onClick={() => setActiveTab('behavior')}
-          className={`py-1 px-1 rounded-lg text-[9px] font-medium flex items-center justify-center gap-1 transition-all ${
+          className={`py-1.5 px-0.5 rounded-lg text-[10px] font-medium flex items-center justify-center gap-1 transition-all ${
             activeTab === 'behavior'
-              ? 'bg-pink-500 text-white shadow-sm'
+              ? 'bg-pink-500 text-white shadow-sm font-semibold'
               : 'text-white/60 hover:text-white/90'
           }`}
         >
-          <Bot className="w-2.5 h-2.5" />
-          <span>{t.settings.tabBehavior}</span>
+          <Bot className="w-3 h-3 flex-shrink-0" />
+          <span className="truncate">{t.settings.tabBehavior}</span>
         </button>
 
         <button
           type="button"
           onClick={() => setActiveTab('window')}
-          className={`py-1 px-1 rounded-lg text-[9px] font-medium flex items-center justify-center gap-1 transition-all ${
+          className={`py-1.5 px-0.5 rounded-lg text-[10px] font-medium flex items-center justify-center gap-1 transition-all ${
             activeTab === 'window'
-              ? 'bg-pink-500 text-white shadow-sm'
+              ? 'bg-pink-500 text-white shadow-sm font-semibold'
               : 'text-white/60 hover:text-white/90'
           }`}
         >
-          <AppWindow className="w-2.5 h-2.5" />
-          <span>{t.settings.tabWindow}</span>
+          <AppWindow className="w-3 h-3 flex-shrink-0" />
+          <span className="truncate">{t.settings.tabWindow}</span>
         </button>
 
         <button
           type="button"
           onClick={() => setActiveTab('powers')}
-          className={`py-1 px-1 rounded-lg text-[9px] font-medium flex items-center justify-center gap-1 transition-all ${
+          className={`py-1.5 px-0.5 rounded-lg text-[10px] font-medium flex items-center justify-center gap-1 transition-all ${
             activeTab === 'powers'
-              ? 'bg-pink-500 text-white shadow-sm'
+              ? 'bg-pink-500 text-white shadow-sm font-semibold'
               : 'text-white/60 hover:text-white/90'
           }`}
         >
-          <Zap className="w-2.5 h-2.5 text-amber-300" />
-          <span>{t.settings.tabPowers}</span>
+          <Zap className="w-3 h-3 text-amber-300 flex-shrink-0" />
+          <span className="truncate">{t.settings.tabPowers}</span>
         </button>
       </div>
 

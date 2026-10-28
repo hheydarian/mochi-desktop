@@ -23,7 +23,7 @@ export const DropOverlay: React.FC<DropOverlayProps> = ({ isDragging }) => {
             <UploadCloud className="w-6 h-6" />
           </div>
           <p className="text-xs font-bold text-purple-100 text-center px-3 tracking-wide">
-            {t.powers.exifSanitizer}
+            {t.settings.exifSanitizer}
           </p>
         </motion.div>
       )}

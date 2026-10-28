@@ -15,6 +15,23 @@
       window.addEventListener('contextmenu', function(e) {
         e.preventDefault();
       }, true);
+      // Prevent Chromium / WebView2 from navigating to dropped image files
+      window.addEventListener('dragover', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+      }, false);
+      window.addEventListener('drop', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+      }, false);
+      document.addEventListener('dragover', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+      }, false);
+      document.addEventListener('drop', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+      }, false);
     </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>

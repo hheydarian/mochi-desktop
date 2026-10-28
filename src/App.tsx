@@ -60,14 +60,16 @@ export const App: React.FC = () => {
     toggleAlwaysOnTop,
     setWindowVisible,
     settingsSide,
+    setSettingsSide,
+    isTimeCapsuleModalOpen,
+    speechBubble,
     clipboardGuardianEnabled,
-    systemVitalsEnabled,
     autoSanitizeExif,
     setSystemVitals,
     setIsHighSystemLoad,
     showSpeechBubble,
     hideSpeechBubble,
-    removeTimeCapsule,
+    deleteTimeCapsule,
     lang,
   } = useMochiStore();
 
@@ -77,7 +79,34 @@ export const App: React.FC = () => {
   const lastAlertedClipboardRef = useRef<string>('');
   const alertedCapsulesRef = useRef<Set<string>>(new Set());
 
-  // 1. Auto-dock window to bottom-right corner of the monitor (4px margin from right & taskbar)
+  // Determine if side UI (Settings, TimeCapsule, or SpeechBubble) is open
+  const isSideUiOpen = isSettingsOpen || isTimeCapsuleModalOpen || !!speechBubble;
+
+  // 1. Dynamic Window Safe-Zone Resizing (Tauri Window Expansion/Collapse)
+  // Expands window to 560x360 with screen boundary clamping when side UI opens,
+  // collapses back to 240x260 when closed so desktop clicks are 100% unblocked!
+  useEffect(() => {
+    const updateWindowSize = async () => {
+      try {
+        const { getCurrentWindow } = await import('@tauri-apps/api/window');
+        const { invoke } = await import('@tauri-apps/api/core');
+        const win = getCurrentWindow();
+        const side = await invoke<string>('set_settings_open', {
+          window: win,
+          open: isSideUiOpen,
+        });
+        if (side === 'left' || side === 'right') {
+          setSettingsSide(side);
+        }
+      } catch {
+        // Not in Tauri runtime
+      }
+    };
+
+    updateWindowSize();
+  }, [isSideUiOpen, setSettingsSide]);
+
+  // 2. Auto-dock window to bottom-right corner of the monitor on initial launch
   useEffect(() => {
     const dockToBottomRight = async () => {
       try {
@@ -103,7 +132,7 @@ export const App: React.FC = () => {
     dockToBottomRight();
   }, []);
 
-  // 2. Global Context Menu Suppression: Disable browser right-click menu (Save image as, inspect, etc.)
+  // 3. Global Context Menu Suppression: Disable browser right-click menu
   useEffect(() => {
     const disableContextMenu = (e: MouseEvent) => {
       e.preventDefault();
@@ -112,7 +141,7 @@ export const App: React.FC = () => {
     return () => window.removeEventListener('contextmenu', disableContextMenu, { capture: true });
   }, []);
 
-  // 3. Tauri Tray Menu & Visibility Event Listeners
+  // 4. Tauri Tray Menu & Visibility Event Listeners
   useEffect(() => {
     let unlistenSettings: (() => void) | undefined;
     let unlistenPin: (() => void) | undefined;
@@ -144,7 +173,7 @@ export const App: React.FC = () => {
     };
   }, [setIsSettingsOpen, toggleAlwaysOnTop, setWindowVisible]);
 
-  // 4. Frustration Comfort & System Vitals Listeners (Rust event bridge)
+  // 5. Frustration Comfort & System Vitals Listeners (Rust event bridge)
   useEffect(() => {
     let unlistenFrustration: (() => void) | undefined;
     let unlistenVitals: (() => void) | undefined;
@@ -174,7 +203,7 @@ export const App: React.FC = () => {
           }, 3500);
         });
 
-        // System Vitals Stream: RAM & CPU load
+        // System Vitals Stream: RAM load from single background supervisor
         unlistenVitals = await listen<{
           cpu_percent: number;
           memory_percent: number;
@@ -203,7 +232,7 @@ export const App: React.FC = () => {
     };
   }, [lang, setMascotState, showSpeechBubble, setSystemVitals, setIsHighSystemLoad]);
 
-  // 5. Secret Clipboard Guardian Periodic Scanner
+  // 6. Secret Clipboard Guardian Periodic Scanner (Every 2.8s)
   useEffect(() => {
     if (!clipboardGuardianEnabled) return;
 
@@ -287,11 +316,11 @@ export const App: React.FC = () => {
       }
     };
 
-    const interval = setInterval(checkClipboard, 2600);
+    const interval = setInterval(checkClipboard, 2800);
     return () => clearInterval(interval);
   }, [clipboardGuardianEnabled, lang, setMascotState, showSpeechBubble, hideSpeechBubble]);
 
-  // 6. Time Capsule Alarm Watcher
+  // 7. Time Capsule Alarm Watcher
   useEffect(() => {
     const checkCapsules = () => {
       const now = Date.now();
@@ -306,13 +335,13 @@ export const App: React.FC = () => {
           showSpeechBubble({
             id: 'capsule_alert_' + cap.id,
             icon: 'capsule',
-            text: `⏳ ${cap.title}\n${cap.message}`,
+            text: `⏳ ${cap.message}`,
             actions: [
               {
                 label: lang === 'fa' ? 'تحویل گرفتم ✓' : 'Received ✓',
                 variant: 'primary',
                 onClick: () => {
-                  removeTimeCapsule(cap.id);
+                  deleteTimeCapsule(cap.id);
                   hideSpeechBubble();
                   if (useMochiStore.getState().mascotState === 'waving') {
                     setMascotState('idle');
@@ -328,9 +357,9 @@ export const App: React.FC = () => {
 
     const interval = setInterval(checkCapsules, 4000);
     return () => clearInterval(interval);
-  }, [lang, setMascotState, showSpeechBubble, hideSpeechBubble, removeTimeCapsule]);
+  }, [lang, setMascotState, showSpeechBubble, hideSpeechBubble, deleteTimeCapsule]);
 
-  // 7. EXIF Privacy Sanitizer File Processor (Strips 100% EXIF, GPS & Camera Metadata)
+  // 8. Native Rust EXIF/Metadata Stripper File Processor (Zero UI freeze, zero Base64 memory overhead)
   const processDroppedImage = useCallback(
     async (filePath: string) => {
       const lower = filePath.toLowerCase();
@@ -359,34 +388,8 @@ export const App: React.FC = () => {
         soundFx.nomNom();
         setMascotState('waving');
 
-        // Read raw image bytes via Rust base64 loader
-        const rawBase64 = await invoke<string>('read_image_base64', { path: filePath });
-
-        // Load into offscreen HTML Canvas (re-rendering pixel buffers strips 100% EXIF/GPS/Device metadata)
-        const mime = lower.endsWith('.png') ? 'image/png' : 'image/jpeg';
-        const img = new Image();
-        img.src = `data:${mime};base64,${rawBase64}`;
-
-        await new Promise<void>((resolve, reject) => {
-          img.onload = () => resolve();
-          img.onerror = () => reject(new Error('Failed to load image into canvas'));
-        });
-
-        const canvas = document.createElement('canvas');
-        canvas.width = img.naturalWidth;
-        canvas.height = img.naturalHeight;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) throw new Error('Failed to get 2d canvas context');
-
-        ctx.drawImage(img, 0, 0);
-        const cleanDataUrl = canvas.toDataURL(mime, 0.94);
-        const cleanBase64 = cleanDataUrl.split(',')[1];
-
-        // Save sanitized clean copy in the original directory as filename_clean.*
-        const savedCleanPath = await invoke<string>('save_sanitized_image', {
-          originalPath: filePath,
-          base64Data: cleanBase64,
-        });
+        // Execute 100% loss-free native Rust EXIF/metadata sanitizer
+        const cleanPath = await invoke<string>('sanitize_image_file', { filePath });
 
         soundFx.magicChime();
         showSpeechBubble({
@@ -403,7 +406,7 @@ export const App: React.FC = () => {
               variant: 'primary',
               onClick: async () => {
                 try {
-                  await invoke('open_file_in_folder', { path: savedCleanPath });
+                  await invoke('open_file_in_folder', { path: cleanPath });
                 } catch {
                   // Ignore
                 }
@@ -425,7 +428,7 @@ export const App: React.FC = () => {
     [autoSanitizeExif, lang, setMascotState, showSpeechBubble]
   );
 
-  // 8. Tauri v2 native file drop listener
+  // 9. Tauri v2 Native File Drag-and-Drop Listener
   useEffect(() => {
     let unlisten: (() => void) | undefined;
 
@@ -464,9 +467,9 @@ export const App: React.FC = () => {
     };
   }, [setMascotState, processDroppedImage]);
 
-  // 9. Window drag interaction: hold left-click and drag anywhere on Mochi to move window
+  // 10. Window Drag Interaction: hold left-click and drag on Mochi to move window
   const handlePointerDown = (e: React.PointerEvent) => {
-    if (e.button === 0 && !isSettingsOpen) {
+    if (e.button === 0 && !isSideUiOpen) {
       pointerStartRef.current = { x: e.clientX, y: e.clientY };
     }
   };
@@ -491,7 +494,7 @@ export const App: React.FC = () => {
     pointerStartRef.current = null;
   };
 
-  // Fail-Safe Close: Clicking Mochi while settings is open toggles it closed
+  // Clicking Mochi while settings is open toggles it closed
   const handleMascotClick = () => {
     if (isSettingsOpen) {
       setIsSettingsOpen(false);
@@ -505,7 +508,7 @@ export const App: React.FC = () => {
     toggleSettings();
   };
 
-  // 10. Web fallback drag & drop
+  // Web fallback drag & drop
   const handleDragOver = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault();
@@ -552,39 +555,42 @@ export const App: React.FC = () => {
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
-      className={`relative w-screen h-screen bg-transparent overflow-hidden select-none flex items-center ${
-        !isSettingsOpen
-          ? 'justify-center'
+      className={`relative w-screen h-screen bg-transparent overflow-hidden select-none flex items-end ${
+        !isSideUiOpen
+          ? 'justify-center p-0'
           : settingsSide === 'right'
-          ? 'flex-row justify-start pl-1'
-          : 'flex-row justify-end pr-1'
+          ? 'flex-row-reverse justify-end p-2 gap-2.5'
+          : 'flex-row justify-end p-2 gap-2.5'
       }`}
       style={{
         background: 'transparent',
         backgroundColor: 'transparent',
       }}
     >
-      {/* If settings is on the left of Mochi */}
-      {isSettingsOpen && settingsSide === 'left' && (
-        <div className="flex-1 h-full flex items-center justify-center pl-2">
-          <SettingsModal />
+      {/* Side Safe-Zone UI Panel (SpeechBubble / SettingsModal / TimeCapsuleModal) */}
+      {isSideUiOpen && (
+        <div className="flex-1 h-full flex items-center justify-center pointer-events-auto">
+          {isSettingsOpen ? (
+            <SettingsModal />
+          ) : isTimeCapsuleModalOpen ? (
+            <TimeCapsuleModal />
+          ) : speechBubble ? (
+            <SpeechBubble side={settingsSide} />
+          ) : null}
         </div>
       )}
 
-      {/* Mascot Viewport (Fixed at 240x260 in normal mode or on the right/left in expanded mode) */}
+      {/* Mascot Viewport (Fixed at 210x250) */}
       <div
         onContextMenu={handleMascotContextMenu}
-        className="relative w-[240px] h-[260px] flex items-center justify-center flex-shrink-0"
+        className="relative w-[210px] h-[250px] flex items-center justify-center flex-shrink-0 pointer-events-auto"
       >
-        {/* Real 3D Floating Mochi Mascot with Object Pooling & Damped Interpolation */}
+        {/* Real 3D Floating Mochi Mascot */}
         <MochiCanvas
           isHovered={isHovered}
           onMascotClick={handleMascotClick}
           onContextMenu={handleMascotContextMenu}
         />
-
-        {/* Floating Liquid Glass Speech Bubble */}
-        <SpeechBubble />
 
         {/* Radial Orbital Glass Menu (Appears strictly on Hover when Settings is closed) */}
         <RadialOrbitalMenu isVisible={isHovered && !isSettingsOpen} />
@@ -592,16 +598,6 @@ export const App: React.FC = () => {
         {/* Drag & Drop Feedback Overlay */}
         <DropOverlay isDragging={isDraggingFile || mascotState === 'dragOver'} />
       </div>
-
-      {/* If settings is on the right of Mochi (when Mochi was docked on the left screen edge) */}
-      {isSettingsOpen && settingsSide === 'right' && (
-        <div className="flex-1 h-full flex items-center justify-center pr-2">
-          <SettingsModal />
-        </div>
-      )}
-
-      {/* Liquid Glass Time Capsule Modal */}
-      <TimeCapsuleModal />
     </div>
   );
 };

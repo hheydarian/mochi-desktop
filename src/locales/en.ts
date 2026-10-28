@@ -11,6 +11,7 @@ export const en: TranslationSchema = {
       waving: 'Waving',
       alert: 'Alert',
       sleeping: 'Sleeping',
+      dizzy: 'Dizzy',
       dragOver: 'Drop file here!',
       processing: 'Processing...',
     },
