@@ -19,9 +19,18 @@ import {
   ChevronDown,
   Smile,
   Bell,
+  Zap,
+  Radio,
+  Clock,
+  Trash2,
+  ShieldAlert,
+  Activity,
+  FileImage,
+  Plus,
 } from 'lucide-react';
 import { useMochiStore } from '../../store/useMochiStore';
 import { useTranslation } from '../../locales';
+import { type RadioMode } from '../../utils/sound';
 
 interface CapsuleToggleProps {
   icon: React.ReactNode;
@@ -97,10 +106,23 @@ export const SettingsModal: React.FC = () => {
     quitApp,
     lang,
     setLang,
+    radioMode,
+    setRadioMode,
+    radioVolume,
+    setRadioVolume,
+    timeCapsules,
+    deleteTimeCapsule,
+    setIsTimeCapsuleModalOpen,
+    clipboardGuardianEnabled,
+    setClipboardGuardianEnabled,
+    systemVitalsEnabled,
+    setSystemVitalsEnabled,
+    autoSanitizeExif,
+    setAutoSanitizeExif,
   } = useMochiStore();
 
   const { t } = useTranslation();
-  const [activeTab, setActiveTab] = useState<'appearance' | 'behavior' | 'window'>('appearance');
+  const [activeTab, setActiveTab] = useState<'appearance' | 'behavior' | 'window' | 'powers'>('appearance');
 
   // Fail-Safe Close 1: Escape key closes settings instantly
   useEffect(() => {
@@ -151,45 +173,58 @@ export const SettingsModal: React.FC = () => {
         </button>
       </div>
 
-      {/* 2. Three Top Navigation Tabs */}
-      <div className="grid grid-cols-3 gap-1 bg-black/40 p-0.5 rounded-xl border border-white/10 my-1.5">
+      {/* 2. Four Top Navigation Tabs */}
+      <div className="grid grid-cols-4 gap-1 bg-black/40 p-0.5 rounded-xl border border-white/10 my-1.5">
         <button
           type="button"
           onClick={() => setActiveTab('appearance')}
-          className={`py-1.5 px-2 rounded-lg text-[10px] font-medium flex items-center justify-center gap-1.5 transition-all ${
+          className={`py-1 px-1 rounded-lg text-[9px] font-medium flex items-center justify-center gap-1 transition-all ${
             activeTab === 'appearance'
               ? 'bg-pink-500 text-white shadow-sm'
               : 'text-white/60 hover:text-white/90'
           }`}
         >
-          <Palette className="w-3 h-3" />
+          <Palette className="w-2.5 h-2.5" />
           <span>{t.settings.tabAppearance}</span>
         </button>
 
         <button
           type="button"
           onClick={() => setActiveTab('behavior')}
-          className={`py-1.5 px-2 rounded-lg text-[10px] font-medium flex items-center justify-center gap-1.5 transition-all ${
+          className={`py-1 px-1 rounded-lg text-[9px] font-medium flex items-center justify-center gap-1 transition-all ${
             activeTab === 'behavior'
               ? 'bg-pink-500 text-white shadow-sm'
               : 'text-white/60 hover:text-white/90'
           }`}
         >
-          <Bot className="w-3 h-3" />
+          <Bot className="w-2.5 h-2.5" />
           <span>{t.settings.tabBehavior}</span>
         </button>
 
         <button
           type="button"
           onClick={() => setActiveTab('window')}
-          className={`py-1.5 px-2 rounded-lg text-[10px] font-medium flex items-center justify-center gap-1.5 transition-all ${
+          className={`py-1 px-1 rounded-lg text-[9px] font-medium flex items-center justify-center gap-1 transition-all ${
             activeTab === 'window'
               ? 'bg-pink-500 text-white shadow-sm'
               : 'text-white/60 hover:text-white/90'
           }`}
         >
-          <AppWindow className="w-3 h-3" />
+          <AppWindow className="w-2.5 h-2.5" />
           <span>{t.settings.tabWindow}</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('powers')}
+          className={`py-1 px-1 rounded-lg text-[9px] font-medium flex items-center justify-center gap-1 transition-all ${
+            activeTab === 'powers'
+              ? 'bg-pink-500 text-white shadow-sm'
+              : 'text-white/60 hover:text-white/90'
+          }`}
+        >
+          <Zap className="w-2.5 h-2.5 text-amber-300" />
+          <span>{t.settings.tabPowers}</span>
         </button>
       </div>
 
@@ -429,6 +464,140 @@ export const SettingsModal: React.FC = () => {
                   <span className="truncate">{t.settings.quit}</span>
                 </button>
               </div>
+            </motion.div>
+          )}
+
+          {activeTab === 'powers' && (
+            <motion.div
+              key="powers"
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.15 }}
+              className="space-y-1.5 max-h-[220px] overflow-y-auto pr-0.5"
+              style={{ scrollbarWidth: 'none' }}
+            >
+              {/* 1. Ambient Radio */}
+              <div className="p-2 rounded-xl bg-white/[0.04] border border-white/[0.06] space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <Radio className="w-3.5 h-3.5 text-pink-300" />
+                    <span className="text-[11px] font-medium text-white/95">{t.settings.radioTitle}</span>
+                  </div>
+                  <span className="text-[9px] text-pink-300/80 font-mono font-semibold">
+                    {radioMode !== 'off' ? radioMode.toUpperCase() : 'OFF'}
+                  </span>
+                </div>
+                {/* Mode Selector */}
+                <div className="grid grid-cols-4 gap-1">
+                  {[
+                    { id: 'rain', label: t.settings.radioRain },
+                    { id: 'fireplace', label: t.settings.radioFireplace },
+                    { id: 'binaural', label: t.settings.radioBinaural },
+                    { id: 'off', label: t.settings.radioOff },
+                  ].map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => setRadioMode(item.id as RadioMode)}
+                      className={`py-1 px-0.5 rounded-lg text-[9px] font-medium transition-all cursor-pointer truncate ${
+                        radioMode === item.id
+                          ? 'bg-pink-500 text-white shadow-sm'
+                          : 'bg-white/5 hover:bg-white/10 text-white/70'
+                      }`}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+                {/* Volume Slider */}
+                {radioMode !== 'off' && (
+                  <div className="flex items-center gap-2 pt-0.5">
+                    <Volume2 className="w-3 h-3 text-white/50" />
+                    <input
+                      type="range"
+                      min="0"
+                      max="1"
+                      step="0.05"
+                      value={radioVolume}
+                      onChange={(e) => setRadioVolume(parseFloat(e.target.value))}
+                      className="flex-1 h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-pink-500"
+                    />
+                    <span className="text-[9px] font-mono text-white/50">{Math.round(radioVolume * 100)}%</span>
+                  </div>
+                )}
+              </div>
+
+              {/* 2. Time Capsules */}
+              <div className="p-2 rounded-xl bg-white/[0.04] border border-white/[0.06] space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5 text-cyan-300" />
+                    <span className="text-[11px] font-medium text-white/95">{t.settings.timeCapsuleTitle}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsTimeCapsuleModalOpen(true)}
+                    className="py-0.5 px-2 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400/30 text-cyan-200 text-[9px] font-medium flex items-center gap-1 transition-all cursor-pointer"
+                  >
+                    <Plus className="w-2.5 h-2.5" />
+                    <span>{t.settings.newCapsuleBtn}</span>
+                  </button>
+                </div>
+                {/* Active capsules */}
+                {timeCapsules.length === 0 ? (
+                  <p className="text-[9px] text-white/40 italic py-0.5 text-center">{t.settings.noCapsules}</p>
+                ) : (
+                  <div className="space-y-1 max-h-[60px] overflow-y-auto pr-0.5" style={{ scrollbarWidth: 'none' }}>
+                    {timeCapsules.map((tc) => {
+                      const minsLeft = Math.max(0, Math.round((tc.targetTime - Date.now()) / 60000));
+                      return (
+                        <div
+                          key={tc.id}
+                          className="flex items-center justify-between py-1 px-1.5 rounded-lg bg-white/[0.03] border border-white/[0.04] text-[9px]"
+                        >
+                          <span className="truncate flex-1 text-white/80 font-medium">{tc.message}</span>
+                          <div className="flex items-center gap-1.5 pl-1.5">
+                            <span className="text-cyan-300 font-mono text-[8px]">{minsLeft}m</span>
+                            <button
+                              type="button"
+                              onClick={() => deleteTimeCapsule(tc.id)}
+                              className="text-white/40 hover:text-rose-300 transition-colors cursor-pointer"
+                            >
+                              <Trash2 className="w-2.5 h-2.5" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* 3. Automation Toggles */}
+              <CapsuleToggle
+                icon={<ShieldAlert className="w-3.5 h-3.5 text-amber-300" />}
+                title={t.settings.clipboardGuardian}
+                desc={t.settings.clipboardGuardianDesc}
+                checked={clipboardGuardianEnabled}
+                onChange={setClipboardGuardianEnabled}
+              />
+
+              <CapsuleToggle
+                icon={<Activity className="w-3.5 h-3.5 text-rose-300" />}
+                title={t.settings.systemVitals}
+                desc={t.settings.systemVitalsDesc}
+                checked={systemVitalsEnabled}
+                onChange={setSystemVitalsEnabled}
+              />
+
+              <CapsuleToggle
+                icon={<FileImage className="w-3.5 h-3.5 text-emerald-300" />}
+                title={t.settings.exifSanitizer}
+                desc={t.settings.exifSanitizerDesc}
+                checked={autoSanitizeExif}
+                onChange={setAutoSanitizeExif}
+              />
             </motion.div>
           )}
         </AnimatePresence>

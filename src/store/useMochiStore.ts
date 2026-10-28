@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import { soundFx } from '../utils/sound';
+import { soundFx, ambientRadio, type RadioMode } from '../utils/sound';
 
 export type MascotState =
   | 'idle'
@@ -8,11 +8,37 @@ export type MascotState =
   | 'alert'
   | 'sleeping'
   | 'dragOver'
-  | 'processing';
+  | 'processing'
+  | 'dizzy';
 
 export type Language = 'en' | 'fa';
 export type AnimationSpeed = 'chill' | 'normal' | 'energetic';
 export type SettingsSide = 'left' | 'right';
+
+export interface TimeCapsule {
+  id: string;
+  message: string;
+  createdAt: number;
+  targetTime: number;
+  completed: boolean;
+}
+
+export interface SpeechBubbleAction {
+  label: string;
+  onClick: () => void;
+  isPrimary?: boolean;
+  isDanger?: boolean;
+}
+
+export interface SpeechBubbleMessage {
+  id: string;
+  text: string;
+  icon?: string;
+  timeoutMs?: number;
+  countdownSeconds?: number;
+  actions?: SpeechBubbleAction[];
+  onTimeout?: () => void;
+}
 
 export interface MochiStoreState {
   // Mascot & UI States
@@ -34,6 +60,22 @@ export interface MochiStoreState {
   animSpeed: AnimationSpeed;
   soundEnabled: boolean;
 
+  // Powers (Module 1 - 6)
+  clipboardGuardianEnabled: boolean;
+  systemVitalsEnabled: boolean;
+  autoSanitizeExif: boolean;
+  radioMode: RadioMode;
+  radioVolume: number;
+  vitalsThreshold: number; // Default 88%
+
+  // Runtime Powers State
+  systemVitals: { memoryPercent: number; cpuPercent: number; topProcess: string };
+  isHighSystemLoad: boolean;
+  speechBubble: SpeechBubbleMessage | null;
+  timeCapsules: TimeCapsule[];
+  isTimeCapsuleModalOpen: boolean;
+  activeCapsuleAlarm: TimeCapsule | null;
+
   // Actions
   setMascotState: (state: MascotState, source?: 'auto' | 'manual') => void;
   cycleMood: () => void;
@@ -53,6 +95,24 @@ export interface MochiStoreState {
   setMascotOpacity: (opacity: number) => void;
   setAnimSpeed: (speed: AnimationSpeed) => void;
   setSoundEnabled: (enabled: boolean) => void;
+
+  // Powers Actions
+  setClipboardGuardianEnabled: (enabled: boolean) => void;
+  setSystemVitalsEnabled: (enabled: boolean) => void;
+  setAutoSanitizeExif: (enabled: boolean) => void;
+  setRadioMode: (mode: RadioMode) => void;
+  cycleRadioMode: () => void;
+  setRadioVolume: (vol: number) => void;
+  setVitalsThreshold: (threshold: number) => void;
+  setSystemVitals: (vitals: { memoryPercent: number; cpuPercent: number; topProcess: string }) => void;
+
+  showSpeechBubble: (message: SpeechBubbleMessage) => void;
+  hideSpeechBubble: () => void;
+
+  addTimeCapsule: (message: string, durationMinutes: number) => void;
+  deleteTimeCapsule: (id: string) => void;
+  acknowledgeCapsuleAlarm: (id: string) => void;
+  setIsTimeCapsuleModalOpen: (open: boolean) => void;
 
   resetPosition: () => Promise<void>;
   quitApp: () => Promise<void>;
@@ -78,10 +138,27 @@ export const useMochiStore = create<MochiStoreState>()(
       animSpeed: 'normal',
       soundEnabled: true,
 
+      // Powers defaults
+      clipboardGuardianEnabled: true,
+      systemVitalsEnabled: true,
+      autoSanitizeExif: true,
+      radioMode: 'off',
+      radioVolume: 0.5,
+      vitalsThreshold: 88,
+
+      systemVitals: { memoryPercent: 0, cpuPercent: 0, topProcess: 'System' },
+      isHighSystemLoad: false,
+      speechBubble: null,
+      timeCapsules: [],
+      isTimeCapsuleModalOpen: false,
+      activeCapsuleAlarm: null,
+
       setMascotState: (state, source) => {
         if (get().soundEnabled && get().mascotState !== state) {
           if (state === 'sleeping') {
             soundFx.sleepChirp();
+          } else if (state === 'dizzy') {
+            soundFx.dizzy();
           } else {
             soundFx.pop();
           }
@@ -188,6 +265,110 @@ export const useMochiStore = create<MochiStoreState>()(
 
       setSoundEnabled: (enabled) => set({ soundEnabled: enabled }),
 
+      // Powers Actions
+      setClipboardGuardianEnabled: (enabled) => {
+        if (get().soundEnabled) soundFx.glassTick();
+        set({ clipboardGuardianEnabled: enabled });
+      },
+
+      setSystemVitalsEnabled: (enabled) => {
+        if (get().soundEnabled) soundFx.glassTick();
+        set({ systemVitalsEnabled: enabled });
+      },
+
+      setAutoSanitizeExif: (enabled) => {
+        if (get().soundEnabled) soundFx.glassTick();
+        set({ autoSanitizeExif: enabled });
+      },
+
+      setRadioMode: (mode) => {
+        if (mode === 'off') {
+          ambientRadio.stop();
+        } else {
+          ambientRadio.start(mode, get().radioVolume);
+        }
+        if (get().soundEnabled) soundFx.pop();
+        set({ radioMode: mode });
+      },
+
+      cycleRadioMode: () => {
+        const modes: RadioMode[] = ['off', 'rain', 'fireplace', 'binaural'];
+        const current = get().radioMode;
+        const nextIdx = (modes.indexOf(current) + 1) % modes.length;
+        get().setRadioMode(modes[nextIdx]);
+      },
+
+      setRadioVolume: (vol) => {
+        ambientRadio.setVolume(vol);
+        set({ radioVolume: vol });
+      },
+
+      setVitalsThreshold: (threshold) => {
+        set({ vitalsThreshold: threshold });
+      },
+
+      setSystemVitals: (vitals) => {
+        const threshold = get().vitalsThreshold;
+        const isHigh = vitals.memoryPercent >= threshold || vitals.cpuPercent >= threshold;
+        set({
+          systemVitals: vitals,
+          isHighSystemLoad: isHigh,
+        });
+      },
+
+      showSpeechBubble: (message) => {
+        set({ speechBubble: message });
+      },
+
+      hideSpeechBubble: () => {
+        set({ speechBubble: null });
+      },
+
+      addTimeCapsule: (message, durationMinutes) => {
+        const newCapsule: TimeCapsule = {
+          id: 'tc_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+          message,
+          createdAt: Date.now(),
+          targetTime: Date.now() + durationMinutes * 60 * 1000,
+          completed: false,
+        };
+        const updated = [...get().timeCapsules, newCapsule];
+        set({
+          timeCapsules: updated,
+          isTimeCapsuleModalOpen: false,
+        });
+        get().setMascotState('processing');
+        soundFx.nomNom();
+        setTimeout(() => {
+          if (get().mascotState === 'processing') {
+            get().setMascotState('idle');
+          }
+        }, 1500);
+      },
+
+      deleteTimeCapsule: (id) => {
+        const updated = get().timeCapsules.filter((tc) => tc.id !== id);
+        set({ timeCapsules: updated });
+        if (get().soundEnabled) soundFx.glassTick();
+      },
+
+      acknowledgeCapsuleAlarm: (id) => {
+        const updated = get().timeCapsules.map((tc) =>
+          tc.id === id ? { ...tc, completed: true } : tc
+        );
+        set({
+          timeCapsules: updated,
+          activeCapsuleAlarm: null,
+        });
+        if (get().soundEnabled) soundFx.magicChime();
+        get().hideSpeechBubble();
+      },
+
+      setIsTimeCapsuleModalOpen: (open) => {
+        if (get().soundEnabled) soundFx.pop();
+        set({ isTimeCapsuleModalOpen: open });
+      },
+
       resetPosition: async () => {
         try {
           const { invoke } = await import('@tauri-apps/api/core');
@@ -222,11 +403,21 @@ export const useMochiStore = create<MochiStoreState>()(
         mascotOpacity: state.mascotOpacity,
         animSpeed: state.animSpeed,
         soundEnabled: state.soundEnabled,
+        clipboardGuardianEnabled: state.clipboardGuardianEnabled,
+        systemVitalsEnabled: state.systemVitalsEnabled,
+        autoSanitizeExif: state.autoSanitizeExif,
+        radioMode: state.radioMode,
+        radioVolume: state.radioVolume,
+        vitalsThreshold: state.vitalsThreshold,
+        timeCapsules: state.timeCapsules,
       }),
       onRehydrateStorage: () => (state) => {
         if (state && typeof document !== 'undefined') {
           document.documentElement.lang = state.lang;
           document.documentElement.dir = state.lang === 'fa' ? 'rtl' : 'ltr';
+          if (state.radioMode && state.radioMode !== 'off') {
+            ambientRadio.start(state.radioMode, state.radioVolume);
+          }
         }
       },
     }

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { Settings, Pin, Move, X } from 'lucide-react';
+import { Settings, Pin, Move, X, Clock, Radio } from 'lucide-react';
 import { useMochiStore } from '../../store/useMochiStore';
 import { useTranslation } from '../../locales';
 
@@ -15,6 +15,9 @@ export const RadialOrbitalMenu: React.FC<RadialOrbitalMenuProps> = ({ isVisible 
     toggleAlwaysOnTop,
     isSettingsOpen,
     toggleSettings,
+    radioMode,
+    cycleRadioMode,
+    setIsTimeCapsuleModalOpen,
   } = useMochiStore();
   const { t } = useTranslation();
   const [activeTooltip, setActiveTooltip] = useState<string | null>(null);
@@ -45,14 +48,14 @@ export const RadialOrbitalMenu: React.FC<RadialOrbitalMenuProps> = ({ isVisible 
   // Center of Mochi in 240x260 viewport
   const centerX = 120;
   const centerY = 135;
-  const radius = 74;
+  const radius = 76;
 
   // Smart Screen-Roof Adaptation: If window is close to screen roof (<120px), open arc downwards
   const isNearTop = typeof window !== 'undefined' && window.screenY < 120;
-  // 4 items evenly spread across a clean, balanced arc
+  // 6 items evenly spread across a clean, balanced arc
   const arcAngles = isNearTop
-    ? [40, 75, 105, 140] // Open downwards when near screen ceiling
-    : [-140, -105, -75, -40]; // Open upwards in normal position
+    ? [28, 52, 76, 104, 128, 152] // Open downwards when near screen ceiling
+    : [-152, -128, -104, -76, -52, -28]; // Open upwards in normal position
 
   interface OrbItem {
     id: string;
@@ -66,6 +69,15 @@ export const RadialOrbitalMenu: React.FC<RadialOrbitalMenuProps> = ({ isVisible 
     isDanger?: boolean;
   }
 
+  const radioTooltip =
+    radioMode === 'rain'
+      ? 'رادیو: باران 🌧️'
+      : radioMode === 'fireplace'
+      ? 'رادیو: شومینه 🔥'
+      : radioMode === 'binaural'
+      ? 'رادیو: تمرکز 🎧'
+      : 'رادیوی آرامش 📻';
+
   const items: OrbItem[] = [
     {
       id: 'settings',
@@ -74,6 +86,21 @@ export const RadialOrbitalMenu: React.FC<RadialOrbitalMenuProps> = ({ isVisible 
       active: isSettingsOpen,
       activeClass: 'text-purple-300 ring-2 ring-purple-400/80 bg-purple-500/30 shadow-purple-500/40',
       onClick: toggleSettings,
+    },
+    {
+      id: 'capsule',
+      icon: <Clock className="w-3.5 h-3.5 text-cyan-200" />,
+      tooltip: 'کپسول زمان ⏳',
+      activeClass: 'text-cyan-300 ring-2 ring-cyan-400/80 bg-cyan-500/30 shadow-cyan-500/40',
+      onClick: () => setIsTimeCapsuleModalOpen(true),
+    },
+    {
+      id: 'radio',
+      icon: <Radio className="w-3.5 h-3.5 text-pink-200" />,
+      tooltip: radioTooltip,
+      active: radioMode !== 'off',
+      activeClass: 'text-pink-300 ring-2 ring-pink-400/80 bg-pink-500/30 shadow-pink-500/40 animate-pulse',
+      onClick: cycleRadioMode,
     },
     {
       id: 'pin',

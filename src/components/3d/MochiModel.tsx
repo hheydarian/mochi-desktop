@@ -25,6 +25,7 @@ export function getModelPathForState(state: MascotState): string {
     case 'dragOver':
       return MODEL_PATHS.alert;
     case 'sleeping':
+    case 'dizzy':
       return MODEL_PATHS.sleeping;
     case 'idle':
     case 'processing':
@@ -126,6 +127,115 @@ const SleepBubbles: React.FC<{ visible: boolean }> = ({ visible }) => {
   );
 };
 
+// 3D Dizzy Cartoon Stars (Spinning around Mochi's head when dizzy)
+const SHARED_STAR_GEOMETRY = new THREE.OctahedronGeometry(0.042, 0);
+const SHARED_STAR_MATERIAL = new THREE.MeshBasicMaterial({
+  color: '#fbbf24',
+  transparent: true,
+  opacity: 0.9,
+});
+
+const DizzyStars: React.FC<{ visible: boolean }> = ({ visible }) => {
+  const starsRef = useRef<THREE.Group>(null);
+  const starCount = 3;
+
+  useFrame((state) => {
+    if (!visible || !starsRef.current) return;
+    const time = state.clock.elapsedTime * 4.8;
+    starsRef.current.children.forEach((star, i) => {
+      const angle = time + (i * Math.PI * 2) / starCount;
+      const radius = 0.26;
+      star.position.x = Math.cos(angle) * radius;
+      star.position.z = Math.sin(angle) * radius;
+      star.position.y = 0.38 + Math.sin(time * 2.5 + i) * 0.04;
+      star.rotation.y = time * 2;
+      star.rotation.z = time * 2;
+    });
+  });
+
+  return (
+    <group ref={starsRef} visible={visible}>
+      {Array.from({ length: starCount }, (_, i) => (
+        <mesh
+          key={i}
+          geometry={SHARED_STAR_GEOMETRY}
+          material={SHARED_STAR_MATERIAL}
+        />
+      ))}
+    </group>
+  );
+};
+
+// 3D Glass Sweat Drop (Beside forehead under heavy system load)
+const SHARED_SWEAT_GEOMETRY = new THREE.ConeGeometry(0.022, 0.065, 8);
+const SHARED_SWEAT_MATERIAL = new THREE.MeshBasicMaterial({
+  color: '#67e8f9',
+  transparent: true,
+  opacity: 0.85,
+});
+
+const SweatDrop: React.FC<{ visible: boolean }> = ({ visible }) => {
+  const dropRef = useRef<THREE.Mesh>(null);
+
+  useFrame((state) => {
+    if (!visible || !dropRef.current) return;
+    const time = state.clock.elapsedTime * 3.5;
+    dropRef.current.position.y = 0.22 + Math.sin(time) * 0.025;
+    dropRef.current.scale.setScalar(0.9 + Math.sin(time * 2) * 0.15);
+  });
+
+  return (
+    <mesh
+      ref={dropRef}
+      visible={visible}
+      geometry={SHARED_SWEAT_GEOMETRY}
+      material={SHARED_SWEAT_MATERIAL}
+      position={[0.22, 0.22, 0.14]}
+      rotation={[0, 0, -Math.PI / 4]}
+    />
+  );
+};
+
+// Procedural Ambient Radio Antenna Glow (Real-time transmission halo)
+const SHARED_ANTENNA_GEOMETRY = new THREE.SphereGeometry(0.04, 10, 10);
+
+const RadioAntennaGlow: React.FC<{ mode: string }> = ({ mode }) => {
+  const lightRef = useRef<THREE.PointLight>(null);
+  const meshRef = useRef<THREE.Mesh>(null);
+
+  const glowColor =
+    mode === 'rain'
+      ? '#38bdf8'
+      : mode === 'fireplace'
+      ? '#f97316'
+      : mode === 'binaural'
+      ? '#a855f7'
+      : '#ffffff';
+
+  useFrame((state) => {
+    if (mode === 'off') return;
+    const t = state.clock.elapsedTime * 4;
+    const pulse = 0.6 + Math.sin(t) * 0.35;
+    if (lightRef.current) {
+      lightRef.current.intensity = pulse * 1.8;
+    }
+    if (meshRef.current) {
+      meshRef.current.scale.setScalar(0.85 + pulse * 0.25);
+    }
+  });
+
+  if (mode === 'off') return null;
+
+  return (
+    <group position={[0, 0.44, 0]}>
+      <pointLight ref={lightRef} color={glowColor} intensity={1.5} distance={1.2} />
+      <mesh ref={meshRef} geometry={SHARED_ANTENNA_GEOMETRY}>
+        <meshBasicMaterial color={glowColor} transparent opacity={0.65} />
+      </mesh>
+    </group>
+  );
+};
+
 export const MochiModel: React.FC<{ isHovered?: boolean }> = ({ isHovered = false }) => {
   const {
     mascotState,
@@ -137,6 +247,12 @@ export const MochiModel: React.FC<{ isHovered?: boolean }> = ({ isHovered = fals
     mascotScale,
     animSpeed,
     soundEnabled,
+    isHighSystemLoad,
+    systemVitals,
+    radioMode,
+    cycleRadioMode,
+    showSpeechBubble,
+    lang,
   } = useMochiStore();
 
   const rootGroupRef = useRef<THREE.Group>(null);
@@ -146,6 +262,11 @@ export const MochiModel: React.FC<{ isHovered?: boolean }> = ({ isHovered = fals
 
   const frameGovernorRef = useRef(0);
   const lastActivePointerRef = useRef(performance.now());
+
+  // Mouse Tornado Detector Refs
+  const lastAngleRef = useRef<number | null>(null);
+  const angularHistoryRef = useRef<{ time: number; dTheta: number }[]>([]);
+  const isDizzyRef = useRef<boolean>(false);
 
   // Smooth Jelly Morph State Machine
   const [displayedState, setDisplayedState] = useState<MascotState>(mascotState);
@@ -190,6 +311,34 @@ export const MochiModel: React.FC<{ isHovered?: boolean }> = ({ isHovered = fals
     return () => clearTimeout(timer);
   }, []);
 
+  // Midnight Gremlin (02:00 AM - 05:00 AM)
+  const lastMidnightYawnRef = useRef<number>(Date.now() - 1000 * 60 * 18);
+  useEffect(() => {
+    const checkMidnightGremlin = () => {
+      const now = new Date();
+      const hour = now.getHours();
+      if (hour >= 2 && hour < 5) {
+        const timeSince = Date.now() - lastMidnightYawnRef.current;
+        if (timeSince >= 20 * 60 * 1000) {
+          lastMidnightYawnRef.current = Date.now();
+          soundFx.yawn();
+          showSpeechBubble({
+            id: 'midnight_' + Date.now(),
+            text:
+              lang === 'fa'
+                ? 'ساعت از ۲ نصفه‌شب گذشته... نمی‌خوای بخوابی رفیق؟ 🦉🌙'
+                : 'It is past 2:00 AM... time to get some sleep, buddy? 🦉🌙',
+            timeoutMs: 6000,
+          });
+        }
+      }
+    };
+
+    const interval = setInterval(checkMidnightGremlin, 60000);
+    checkMidnightGremlin();
+    return () => clearInterval(interval);
+  }, [lang, showSpeechBubble]);
+
   // Speed multiplier
   const speedMult = useMemo(() => {
     switch (animSpeed) {
@@ -231,6 +380,18 @@ export const MochiModel: React.FC<{ isHovered?: boolean }> = ({ isHovered = fals
 
     if (soundEnabled) soundFx.boing();
 
+    if (isHighSystemLoad) {
+      showSpeechBubble({
+        id: 'vitals_' + Date.now(),
+        icon: 'vitals',
+        text:
+          lang === 'fa'
+            ? `هوووف! سیستم داغ کرده! برنامه ${systemVitals.topProcess} داره رم (${systemVitals.memoryPercent}٪) / CPU (${systemVitals.cpuPercent}٪) رو می‌بلعه! 💦🔥`
+            : `Phew! Heavy system load! Process ${systemVitals.topProcess} is hogging RAM (${systemVitals.memoryPercent}%) / CPU (${systemVitals.cpuPercent}%)! 💦🔥`,
+        timeoutMs: 5000,
+      });
+    }
+
     if (mascotState === 'sleeping') {
       setMascotState('idle');
       lastActiveTimeRef.current = Date.now();
@@ -244,6 +405,11 @@ export const MochiModel: React.FC<{ isHovered?: boolean }> = ({ isHovered = fals
         }
       }, 2500);
     }
+  };
+
+  const handleDoubleClick = (e: { stopPropagation: () => void }) => {
+    e.stopPropagation();
+    cycleRadioMode();
   };
 
   useFrame((state, delta) => {
@@ -299,10 +465,53 @@ export const MochiModel: React.FC<{ isHovered?: boolean }> = ({ isHovered = fals
 
     const time = state.clock.elapsedTime * speedMult;
     const isSleeping = displayedState === 'sleeping';
+    const isDizzy = displayedState === 'dizzy';
     const isProcessing = displayedState === 'processing';
 
+    // --- Mouse Tornado Angular Tracking (6π rad in < 3s) ---
+    const pointerDistFromCenter = Math.hypot(targetPointerX, targetPointerY);
+    if (pointerDistFromCenter > 0.08) {
+      const currentAngle = Math.atan2(targetPointerY, targetPointerX);
+      if (lastAngleRef.current !== null) {
+        let diff = currentAngle - lastAngleRef.current;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+
+        if (Math.abs(diff) > 0.04) {
+          angularHistoryRef.current.push({ time: now, dTheta: diff });
+        }
+      }
+      lastAngleRef.current = currentAngle;
+    } else {
+      lastAngleRef.current = null;
+    }
+
+    // Clean up history older than 3 seconds
+    angularHistoryRef.current = angularHistoryRef.current.filter((item) => now - item.time < 3000);
+
+    // Sum angular rotation
+    const totalRotation = angularHistoryRef.current.reduce((sum, item) => sum + item.dTheta, 0);
+    if (Math.abs(totalRotation) >= Math.PI * 6 && !isDizzyRef.current) {
+      isDizzyRef.current = true;
+      angularHistoryRef.current = [];
+      setMascotState('dizzy');
+      soundFx.dizzy();
+      showSpeechBubble({
+        id: 'dizzy_' + Date.now(),
+        text: lang === 'fa' ? 'آخ سرم گیج رفت! 😵‍💫🌀' : 'Woah, my head is spinning! 😵‍💫🌀',
+        timeoutMs: 3500,
+      });
+
+      setTimeout(() => {
+        isDizzyRef.current = false;
+        if (useMochiStore.getState().mascotState === 'dizzy') {
+          setMascotState('idle');
+        }
+      }, 3500);
+    }
+
     // --- Autonomous Life Engine ---
-    if (autonomousMode) {
+    if (autonomousMode && !isDizzy) {
       // Mouse motion resets inactivity timer
       if (movedDist > 0.035) {
         lastActiveTimeRef.current = now;
@@ -372,9 +581,13 @@ export const MochiModel: React.FC<{ isHovered?: boolean }> = ({ isHovered = fals
       root.rotation.z = THREE.MathUtils.damp(root.rotation.z, 0.05, 3, delta);
     }
 
-    // --- 2. Processing State 360 Spin ---
+    // --- 2. Processing State 360 Spin & Dizzy Wobble ---
     if (isProcessing) {
       motion.rotation.y += delta * 2.8 * speedMult;
+    } else if (isDizzy) {
+      motion.rotation.y += Math.sin(time * 5) * 0.25 * delta * 60;
+      motion.rotation.z = Math.sin(time * 8) * 0.18;
+      motion.rotation.x = Math.cos(time * 6) * 0.14;
     } else {
       motion.rotation.y = THREE.MathUtils.damp(motion.rotation.y, 0, 8, delta);
     }
@@ -382,6 +595,7 @@ export const MochiModel: React.FC<{ isHovered?: boolean }> = ({ isHovered = fals
     // --- 3. Jelly Breathing & Gentle Floating ---
     let floatY = 0;
     let jellyY = 0;
+    const breathRateMultiplier = isHighSystemLoad ? 2.6 : 1.0;
 
     if (isSleeping) {
       floatY = Math.sin(time * 1.2) * 0.02;
@@ -389,9 +603,12 @@ export const MochiModel: React.FC<{ isHovered?: boolean }> = ({ isHovered = fals
     } else if (isProcessing) {
       floatY = Math.sin(time * 3.8) * 0.04;
       jellyY = Math.sin(time * 3.8) * 0.035;
+    } else if (isDizzy) {
+      floatY = Math.sin(time * 4.2) * 0.03;
+      jellyY = Math.sin(time * 6.5) * 0.06;
     } else {
-      floatY = Math.sin(time * 2.2) * 0.035;
-      jellyY = Math.sin(time * 2.2) * 0.042;
+      floatY = Math.sin(time * 2.2 * breathRateMultiplier) * 0.035;
+      jellyY = Math.sin(time * 2.2 * breathRateMultiplier) * 0.042;
     }
 
     // Periodic Happy Hop in Idle
@@ -453,6 +670,7 @@ export const MochiModel: React.FC<{ isHovered?: boolean }> = ({ isHovered = fals
       case 'dragOver':
         return 'alert';
       case 'sleeping':
+      case 'dizzy':
         return 'sleeping';
       case 'idle':
       case 'processing':
@@ -462,7 +680,7 @@ export const MochiModel: React.FC<{ isHovered?: boolean }> = ({ isHovered = fals
   }, [displayedState]);
 
   return (
-    <group ref={rootGroupRef} onClick={handleClick}>
+    <group ref={rootGroupRef} onClick={handleClick} onDoubleClick={handleDoubleClick}>
       <group ref={motionGroupRef}>
         {/* Scene-Graph Object Pooling: All 4 models kept mounted, instant 0.001ms zero-cost visibility switch */}
         <PooledModel modelPath={MODEL_PATHS.idle} visible={activeKey === 'idle'} />
@@ -472,6 +690,15 @@ export const MochiModel: React.FC<{ isHovered?: boolean }> = ({ isHovered = fals
 
         {/* 3D Sleep Bubbles (Never unmounted, zero GPU buffer allocation leak) */}
         <SleepBubbles visible={displayedState === 'sleeping'} />
+
+        {/* 3D Dizzy Stars (Spinning around Mochi's head when dizzy) */}
+        <DizzyStars visible={displayedState === 'dizzy'} />
+
+        {/* 3D Glass Sweat Drop (Beside forehead under heavy system load) */}
+        <SweatDrop visible={isHighSystemLoad} />
+
+        {/* 3D Procedural Ambient Radio Antenna Glow */}
+        <RadioAntennaGlow mode={radioMode} />
 
         {/* Transient Sparkles on Click or Waving (Pooled in scene graph, zero shader recreation) */}
         <group visible={displayedState === 'waving' || showSparkles}>

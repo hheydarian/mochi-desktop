@@ -34,6 +34,25 @@ export interface TranslationSchema {
     tabAppearance: string;
     tabBehavior: string;
     tabWindow: string;
+    tabPowers: string;
+    powersTitle: string;
+    radioTitle: string;
+    radioDesc: string;
+    radioVolume: string;
+    radioRain: string;
+    radioFireplace: string;
+    radioBinaural: string;
+    radioOff: string;
+    timeCapsuleTitle: string;
+    timeCapsuleDesc: string;
+    newCapsuleBtn: string;
+    noCapsules: string;
+    clipboardGuardian: string;
+    clipboardGuardianDesc: string;
+    systemVitals: string;
+    systemVitalsDesc: string;
+    exifSanitizer: string;
+    exifSanitizerDesc: string;
     windowBehavior: string;
     alwaysOnTop: string;
     alwaysOnTopDesc: string;
@@ -100,6 +119,25 @@ export const fa: TranslationSchema = {
     tabAppearance: 'ظاهر',
     tabBehavior: 'رفتار',
     tabWindow: 'پنجره',
+    tabPowers: 'قدرت‌ها ⚡',
+    powersTitle: 'قدرت‌های جادویی موچی',
+    radioTitle: 'رادیوی آرامش شاخک 📻',
+    radioDesc: 'تولید امواج صوتی محیطی بلادرنگ بدون اینترنت',
+    radioVolume: 'بلندی صدای رادیو',
+    radioRain: 'باران 🌧️',
+    radioFireplace: 'شومینه 🔥',
+    radioBinaural: 'موج تمرکز 🎧',
+    radioOff: 'خاموش ✕',
+    timeCapsuleTitle: 'کپسول‌های زمان ⏳',
+    timeCapsuleDesc: 'یادآورها و اهداف ذخیره‌شده درون موچی',
+    newCapsuleBtn: 'ساخت کپسول جدید',
+    noCapsules: 'هیچ کپسول فعالی وجود ندارد',
+    clipboardGuardian: 'نگهبان امنیتی کلیپ‌بورد 🔐',
+    clipboardGuardianDesc: 'شناسایی و پاکسازی خودکار کلیدهای API و رمزها',
+    systemVitals: 'حس ششم سخت‌افزار 💓',
+    systemVitalsDesc: 'هشدار و واکنش به مصرف بالای رم و پردازنده',
+    exifSanitizer: 'پاکساز متادیتای تصاویر 🧼',
+    exifSanitizerDesc: 'حذف خودکار اطلاعات GPS و دوربین هنگام درگ فایل روی موچی',
     windowBehavior: 'رفتار پنجره',
     alwaysOnTop: 'همیشه روی همه پنجره‌ها',
     alwaysOnTopDesc: 'موچی بالای تمام برنامه‌ها و پنجره‌ها شناور می‌ماند',

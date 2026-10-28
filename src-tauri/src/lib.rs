@@ -375,6 +375,442 @@ fn quit_app(app: tauri::AppHandle) {
     app.exit(0);
 }
 
+// Base64 encode helper
+fn base64_encode(data: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut result = String::with_capacity((data.len() + 2) / 3 * 4);
+    for chunk in data.chunks(3) {
+        let b0 = chunk[0];
+        let b1 = if chunk.len() > 1 { chunk[1] } else { 0 };
+        let b2 = if chunk.len() > 2 { chunk[2] } else { 0 };
+
+        result.push(TABLE[(b0 >> 2) as usize] as char);
+        result.push(TABLE[(((b0 & 0x03) << 4) | (b1 >> 4)) as usize] as char);
+        if chunk.len() > 1 {
+            result.push(TABLE[(((b1 & 0x0F) << 2) | (b2 >> 6)) as usize] as char);
+        } else {
+            result.push('=');
+        }
+        if chunk.len() > 2 {
+            result.push(TABLE[(b2 & 0x3F) as usize] as char);
+        } else {
+            result.push('=');
+        }
+    }
+    result
+}
+
+// Base64 decode helper
+fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
+    const TABLE: [i8; 256] = {
+        let mut t = [-1i8; 256];
+        let chars = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut i = 0;
+        while i < 64 {
+            t[chars[i] as usize] = i as i8;
+            i += 1;
+        }
+        t
+    };
+
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len() * 3 / 4);
+    let mut buf = 0u32;
+    let mut bits = 0u32;
+
+    for &b in bytes {
+        if b == b'=' || b == b'\r' || b == b'\n' || b == b' ' {
+            continue;
+        }
+        let val = TABLE[b as usize];
+        if val < 0 {
+            continue;
+        }
+        buf = (buf << 6) | (val as u32);
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((buf >> bits) as u8);
+        }
+    }
+    Ok(out)
+}
+
+#[cfg(target_os = "windows")]
+mod win_clipboard {
+    use std::ffi::c_void;
+
+    #[link(name = "user32")]
+    extern "system" {
+        fn OpenClipboard(hwnd: *mut c_void) -> i32;
+        fn EmptyClipboard() -> i32;
+        fn CloseClipboard() -> i32;
+        fn GetClipboardData(u_format: u32) -> *mut c_void;
+    }
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GlobalLock(h_mem: *mut c_void) -> *mut c_void;
+        fn GlobalUnlock(h_mem: *mut c_void) -> i32;
+    }
+
+    pub fn clear() -> Result<(), String> {
+        unsafe {
+            if OpenClipboard(std::ptr::null_mut()) != 0 {
+                EmptyClipboard();
+                CloseClipboard();
+                Ok(())
+            } else {
+                Err("Failed to open clipboard".to_string())
+            }
+        }
+    }
+
+    pub fn read_text() -> Result<String, String> {
+        unsafe {
+            if OpenClipboard(std::ptr::null_mut()) == 0 {
+                return Err("Failed to open clipboard".to_string());
+            }
+            // CF_UNICODETEXT = 13
+            let handle = GetClipboardData(13);
+            if handle.is_null() {
+                CloseClipboard();
+                return Ok(String::new());
+            }
+            let ptr = GlobalLock(handle) as *const u16;
+            if ptr.is_null() {
+                CloseClipboard();
+                return Ok(String::new());
+            }
+            let mut len = 0;
+            while *ptr.add(len) != 0 {
+                len += 1;
+            }
+            let slice = std::slice::from_raw_parts(ptr, len);
+            let text = String::from_utf16_lossy(slice);
+            GlobalUnlock(handle);
+            CloseClipboard();
+            Ok(text)
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+mod frustration_monitor {
+    use std::time::{Duration, Instant};
+    use tauri::Emitter;
+
+    #[link(name = "user32")]
+    extern "system" {
+        fn GetAsyncKeyState(v_key: i32) -> i16;
+    }
+
+    pub fn start_monitor(app_handle: tauri::AppHandle) {
+        std::thread::spawn(move || {
+            let mut backspace_times: Vec<Instant> = Vec::with_capacity(20);
+            let mut was_down = false;
+            let mut last_event_time = Instant::now() - Duration::from_secs(300);
+
+            loop {
+                std::thread::sleep(Duration::from_millis(40));
+
+                // VK_BACK = 0x08
+                let state = unsafe { GetAsyncKeyState(0x08) };
+                let is_down = (state as u16 & 0x8000) != 0;
+
+                if is_down && !was_down {
+                    let now = Instant::now();
+                    backspace_times.push(now);
+
+                    // Retain presses within last 4.0 seconds
+                    backspace_times.retain(|&t| now.duration_since(t) <= Duration::from_millis(4000));
+
+                    // Trigger if > 10 bursts within 4 seconds and at least 2 minutes cooldown
+                    if backspace_times.len() >= 10 && now.duration_since(last_event_time) > Duration::from_secs(120) {
+                        last_event_time = now;
+                        backspace_times.clear();
+                        let _ = app_handle.emit("user-frustrated", ());
+                    }
+                }
+                was_down = is_down;
+            }
+        });
+    }
+}
+
+#[cfg(target_os = "windows")]
+mod system_vitals {
+    use std::ffi::c_void;
+    use std::time::Duration;
+    use serde::Serialize;
+    use tauri::Emitter;
+
+    #[repr(C)]
+    struct MEMORYSTATUSEX {
+        dw_length: u32,
+        dw_memory_load: u32,
+        ull_total_phys: u64,
+        ull_avail_phys: u64,
+        ull_total_page_file: u64,
+        ull_avail_page_file: u64,
+        ull_total_virtual: u64,
+        ull_avail_virtual: u64,
+        ull_avail_extended_virtual: u64,
+    }
+
+    #[repr(C)]
+    #[derive(Default, Copy, Clone)]
+    struct FILETIME {
+        dw_low_date_time: u32,
+        dw_high_date_time: u32,
+    }
+
+    #[repr(C)]
+    struct PROCESSENTRY32W {
+        dw_size: u32,
+        cnt_usage: u32,
+        th32_process_id: u32,
+        th32_default_heap_id: usize,
+        th32_module_id: u32,
+        cnt_threads: u32,
+        th32_parent_process_id: u32,
+        pc_pri_class_base: i32,
+        dw_flags: u32,
+        sz_exe_file: [u16; 260],
+    }
+
+    #[repr(C)]
+    struct PROCESS_MEMORY_COUNTERS {
+        cb: u32,
+        page_fault_count: u32,
+        peak_working_set_size: usize,
+        working_set_size: usize,
+        quota_peak_paged_pool_usage: usize,
+        quota_paged_pool_usage: usize,
+        quota_peak_non_paged_pool_usage: usize,
+        quota_non_paged_pool_usage: usize,
+        pagefile_usage: usize,
+        peak_pagefile_usage: usize,
+    }
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GlobalMemoryStatusEx(lp_buffer: *mut MEMORYSTATUSEX) -> i32;
+        fn GetSystemTimes(lp_idle_time: *mut FILETIME, lp_kernel_time: *mut FILETIME, lp_user_time: *mut FILETIME) -> i32;
+        fn CreateToolhelp32Snapshot(dw_flags: u32, th32_process_id: u32) -> *mut c_void;
+        fn Process32FirstW(h_snapshot: *mut c_void, lppe: *mut PROCESSENTRY32W) -> i32;
+        fn Process32NextW(h_snapshot: *mut c_void, lppe: *mut PROCESSENTRY32W) -> i32;
+        fn OpenProcess(dw_desired_access: u32, b_inherit_handle: i32, dw_process_id: u32) -> *mut c_void;
+        fn CloseHandle(h_object: *mut c_void) -> i32;
+        fn K32GetProcessMemoryInfo(h_process: *mut c_void, ppsmst: *mut PROCESS_MEMORY_COUNTERS, cb: u32) -> i32;
+    }
+
+    #[derive(Serialize, Clone)]
+    pub struct VitalsPayload {
+        pub memory_percent: u32,
+        pub cpu_percent: u32,
+        pub top_process: String,
+    }
+
+    fn filetime_to_u64(ft: &FILETIME) -> u64 {
+        ((ft.dw_high_date_time as u64) << 32) | (ft.dw_low_date_time as u64)
+    }
+
+    pub fn start_monitor(app_handle: tauri::AppHandle) {
+        std::thread::spawn(move || {
+            let mut prev_idle = FILETIME::default();
+            let mut prev_kernel = FILETIME::default();
+            let mut prev_user = FILETIME::default();
+
+            unsafe {
+                GetSystemTimes(&mut prev_idle, &mut prev_kernel, &mut prev_user);
+            }
+
+            loop {
+                std::thread::sleep(Duration::from_secs(4));
+
+                let mut mem_status = MEMORYSTATUSEX {
+                    dw_length: std::mem::size_of::<MEMORYSTATUSEX>() as u32,
+                    dw_memory_load: 0,
+                    ull_total_phys: 0,
+                    ull_avail_phys: 0,
+                    ull_total_page_file: 0,
+                    ull_avail_page_file: 0,
+                    ull_total_virtual: 0,
+                    ull_avail_virtual: 0,
+                    ull_avail_extended_virtual: 0,
+                };
+                let mem_percent = unsafe {
+                    if GlobalMemoryStatusEx(&mut mem_status) != 0 {
+                        mem_status.dw_memory_load
+                    } else {
+                        0
+                    }
+                };
+
+                let mut idle = FILETIME::default();
+                let mut kernel = FILETIME::default();
+                let mut user = FILETIME::default();
+                let mut cpu_percent = 0u32;
+
+                unsafe {
+                    if GetSystemTimes(&mut idle, &mut kernel, &mut user) != 0 {
+                        let idle_diff = filetime_to_u64(&idle).saturating_sub(filetime_to_u64(&prev_idle));
+                        let kernel_diff = filetime_to_u64(&kernel).saturating_sub(filetime_to_u64(&prev_kernel));
+                        let user_diff = filetime_to_u64(&user).saturating_sub(filetime_to_u64(&prev_user));
+                        let total_diff = kernel_diff + user_diff;
+
+                        if total_diff > 0 {
+                            let busy_diff = total_diff.saturating_sub(idle_diff);
+                            cpu_percent = ((busy_diff * 100) / total_diff).min(100) as u32;
+                        }
+
+                        prev_idle = idle;
+                        prev_kernel = kernel;
+                        prev_user = user;
+                    }
+                }
+
+                let mut top_proc_name = String::from("System");
+                let mut max_ws = 0usize;
+
+                unsafe {
+                    let snapshot = CreateToolhelp32Snapshot(0x00000002, 0);
+                    if !snapshot.is_null() && snapshot as isize != -1 {
+                        let mut entry = PROCESSENTRY32W {
+                            dw_size: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+                            cnt_usage: 0,
+                            th32_process_id: 0,
+                            th32_default_heap_id: 0,
+                            th32_module_id: 0,
+                            cnt_threads: 0,
+                            th32_parent_process_id: 0,
+                            pc_pri_class_base: 0,
+                            dw_flags: 0,
+                            sz_exe_file: [0; 260],
+                        };
+
+                        if Process32FirstW(snapshot, &mut entry) != 0 {
+                            loop {
+                                if entry.th32_process_id > 4 {
+                                    let h_proc = OpenProcess(0x1000, 0, entry.th32_process_id);
+                                    if !h_proc.is_null() {
+                                        let mut pmc = PROCESS_MEMORY_COUNTERS {
+                                            cb: std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32,
+                                            page_fault_count: 0,
+                                            peak_working_set_size: 0,
+                                            working_set_size: 0,
+                                            quota_peak_paged_pool_usage: 0,
+                                            quota_paged_pool_usage: 0,
+                                            quota_peak_non_paged_pool_usage: 0,
+                                            quota_non_paged_pool_usage: 0,
+                                            pagefile_usage: 0,
+                                            peak_pagefile_usage: 0,
+                                        };
+                                        if K32GetProcessMemoryInfo(h_proc, &mut pmc, pmc.cb) != 0 {
+                                            if pmc.working_set_size > max_ws {
+                                                max_ws = pmc.working_set_size;
+                                                let mut len = 0;
+                                                while len < entry.sz_exe_file.len() && entry.sz_exe_file[len] != 0 {
+                                                    len += 1;
+                                                }
+                                                top_proc_name = String::from_utf16_lossy(&entry.sz_exe_file[..len]);
+                                            }
+                                        }
+                                        CloseHandle(h_proc);
+                                    }
+                                }
+
+                                if Process32NextW(snapshot, &mut entry) == 0 {
+                                    break;
+                                }
+                            }
+                        }
+                        CloseHandle(snapshot);
+                    }
+                }
+
+                let payload = VitalsPayload {
+                    memory_percent: mem_percent,
+                    cpu_percent,
+                    top_process: top_proc_name,
+                };
+
+                let _ = app_handle.emit("system-vitals", payload);
+            }
+        });
+    }
+}
+
+#[tauri::command]
+fn clear_clipboard() -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        win_clipboard::clear()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(())
+    }
+}
+
+#[tauri::command]
+fn read_clipboard_text() -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    {
+        win_clipboard::read_text()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(String::new())
+    }
+}
+
+#[tauri::command]
+fn read_image_base64(file_path: String) -> Result<String, String> {
+    let bytes = std::fs::read(&file_path).map_err(|e| format!("Failed to read file: {}", e))?;
+    Ok(base64_encode(&bytes))
+}
+
+#[tauri::command]
+fn save_sanitized_image(original_path: String, base64_data: String) -> Result<String, String> {
+    use std::path::Path;
+    let path = Path::new(&original_path);
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("image");
+    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("png");
+
+    let clean_filename = format!("{}_clean.{}", stem, ext);
+    let clean_path = parent.join(clean_filename);
+
+    let clean_base64 = if let Some(idx) = base64_data.find(',') {
+        &base64_data[idx + 1..]
+    } else {
+        &base64_data
+    };
+
+    let bytes = base64_decode(clean_base64).map_err(|e| format!("Decode failed: {}", e))?;
+    std::fs::write(&clean_path, &bytes).map_err(|e| format!("Failed to write file: {}", e))?;
+
+    clean_path.to_str().map(|s| s.to_string()).ok_or_else(|| "Invalid UTF-8 path".to_string())
+}
+
+#[tauri::command]
+fn open_file_in_folder(path: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(format!("/select,{}", path))
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(())
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Ultra-Low RAM & Low-Power Chromium Tuning for WebView2:
@@ -603,6 +1039,13 @@ pub fn run() {
                 }
             });
 
+            // Start Frustration & System Vitals Monitors
+            #[cfg(target_os = "windows")]
+            frustration_monitor::start_monitor(app.handle().clone());
+
+            #[cfg(target_os = "windows")]
+            system_vitals::start_monitor(app.handle().clone());
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -615,7 +1058,12 @@ pub fn run() {
             reset_window_position,
             hide_window_to_tray,
             show_window_from_tray,
-            quit_app
+            quit_app,
+            clear_clipboard,
+            read_clipboard_text,
+            read_image_base64,
+            save_sanitized_image,
+            open_file_in_folder
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
