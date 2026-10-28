@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import { soundFx, ambientRadio, type RadioMode } from '../utils/sound';
+import { soundFx } from '../utils/sound';
 
 export type MascotState =
   | 'idle'
@@ -64,8 +64,7 @@ export interface MochiStoreState {
   // Powers (Module 1 - 5)
   clipboardGuardianEnabled: boolean;
   systemVitalsEnabled: boolean;
-  radioMode: RadioMode;
-  radioVolume: number;
+  focusMode: boolean;
   vitalsThreshold: number; // Default 88%
 
   // Runtime Powers State
@@ -100,9 +99,8 @@ export interface MochiStoreState {
   // Powers Actions
   setClipboardGuardianEnabled: (enabled: boolean) => void;
   setSystemVitalsEnabled: (enabled: boolean) => void;
-  setRadioMode: (mode: RadioMode) => void;
-  cycleRadioMode: () => void;
-  setRadioVolume: (vol: number) => void;
+  setFocusMode: (enabled: boolean) => void;
+  toggleFocusMode: () => void;
   setVitalsThreshold: (threshold: number) => void;
   setSystemVitals: (vitals: { memoryPercent: number; cpuPercent: number; topProcess: string }) => void;
   setIsHighSystemLoad: (isHigh: boolean) => void;
@@ -142,8 +140,7 @@ export const useMochiStore = create<MochiStoreState>()(
       // Powers defaults
       clipboardGuardianEnabled: true,
       systemVitalsEnabled: true,
-      radioMode: 'off',
-      radioVolume: 0.5,
+      focusMode: false,
       vitalsThreshold: 88,
 
       systemVitals: { memoryPercent: 0, cpuPercent: 0, topProcess: 'System' },
@@ -280,25 +277,17 @@ export const useMochiStore = create<MochiStoreState>()(
         set({ systemVitalsEnabled: enabled });
       },
 
-      setRadioMode: (mode) => {
-        if (mode === 'off') {
-          ambientRadio.stop();
-          set({ radioMode: 'off' });
+      setFocusMode: (enabled) => {
+        if (enabled) {
+          set({ focusMode: true, speechBubble: null });
         } else {
-          ambientRadio.start(get().radioVolume);
-          set({ radioMode: 'rain', speechBubble: null });
+          set({ focusMode: false });
         }
         if (get().soundEnabled) soundFx.glassTick();
       },
 
-      cycleRadioMode: () => {
-        const next = get().radioMode === 'off' ? 'rain' : 'off';
-        get().setRadioMode(next);
-      },
-
-      setRadioVolume: (vol) => {
-        ambientRadio.setVolume(vol);
-        set({ radioVolume: vol });
+      toggleFocusMode: () => {
+        get().setFocusMode(!get().focusMode);
       },
 
       setVitalsThreshold: (threshold) => {
@@ -319,8 +308,8 @@ export const useMochiStore = create<MochiStoreState>()(
       },
 
       showSpeechBubble: (message) => {
-        // Suppress all notifications & bubbles when in Focus Radio mode!
-        if (get().radioMode !== 'off') return;
+        // Suppress all notifications & bubbles when in Focus & Calm mode!
+        if (get().focusMode) return;
         set({ speechBubble: message });
       },
 
@@ -409,8 +398,7 @@ export const useMochiStore = create<MochiStoreState>()(
         soundEnabled: state.soundEnabled,
         clipboardGuardianEnabled: state.clipboardGuardianEnabled,
         systemVitalsEnabled: state.systemVitalsEnabled,
-        radioMode: state.radioMode,
-        radioVolume: state.radioVolume,
+        focusMode: state.focusMode,
         vitalsThreshold: state.vitalsThreshold,
         timeCapsules: state.timeCapsules,
       }),
@@ -418,9 +406,6 @@ export const useMochiStore = create<MochiStoreState>()(
         if (state && typeof document !== 'undefined') {
           document.documentElement.lang = state.lang;
           document.documentElement.dir = state.lang === 'fa' ? 'rtl' : 'ltr';
-          if (state.radioMode && state.radioMode === 'rain') {
-            ambientRadio.start(state.radioVolume);
-          }
         }
       },
     }

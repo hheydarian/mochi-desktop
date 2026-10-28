@@ -402,6 +402,12 @@ pub fn run() {
                 }
             }
 
+            #[cfg(target_os = "windows")]
+            std::thread::spawn(|| {
+                std::thread::sleep(std::time::Duration::from_millis(2500));
+                win_mem::trim_host_working_set();
+            });
+
             // Setup System Tray with Right-Click Context Menu
             let show_hide_item = MenuItem::with_id(app, "show_hide", "Show / Hide Mochi", true, None::<&str>)?;
             let always_on_top_item = CheckMenuItem::with_id(app, "always_on_top", "Always on Top", true, true, None::<&str>)?;
@@ -569,7 +575,7 @@ pub fn run() {
                 }
 
                 loop {
-                    std::thread::sleep(std::time::Duration::from_millis(120));
+                    std::thread::sleep(std::time::Duration::from_millis(160));
 
                     let Some(window) = app_handle_clone.get_webview_window("main") else {
                         continue;
@@ -586,7 +592,7 @@ pub fn run() {
                         GetCursorPos(&mut pt);
                     }
 
-                    if (pt.x - last_raw_x).abs() < 6 && (pt.y - last_raw_y).abs() < 6 {
+                    if (pt.x - last_raw_x).abs() < 10 && (pt.y - last_raw_y).abs() < 10 {
                         continue;
                     }
 
@@ -612,7 +618,7 @@ pub fn run() {
                         let rel_x = ((pt.x as f64 - center_x) / cached_span_x).clamp(-1.0, 1.0);
                         let rel_y = ((pt.y as f64 - center_y) / cached_span_y).clamp(-1.0, 1.0);
 
-                        if (rel_x - last_emitted_rel_x).abs() > 0.012 || (rel_y - last_emitted_rel_y).abs() > 0.012 {
+                        if (rel_x - last_emitted_rel_x).abs() > 0.024 || (rel_y - last_emitted_rel_y).abs() > 0.024 {
                             last_emitted_rel_x = rel_x;
                             last_emitted_rel_y = rel_y;
                             let _ = app_handle_clone.emit("cursor-move", (rel_x, rel_y));

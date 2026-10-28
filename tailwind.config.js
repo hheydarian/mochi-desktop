@@ -37,12 +37,12 @@ export default {
       fontFamily: {
         sans: [
           'Vazirmatn',
+          'Segoe UI',
+          'Tahoma',
+          'system-ui',
           '-apple-system',
           'BlinkMacSystemFont',
-          'Segoe UI',
           'Roboto',
-          'Helvetica',
-          'Arial',
           'sans-serif',
         ],
       },

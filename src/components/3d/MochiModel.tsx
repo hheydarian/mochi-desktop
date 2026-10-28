@@ -34,11 +34,8 @@ export function getModelPathForState(state: MascotState): string {
   }
 }
 
-// Preload all 4 models immediately into GPU memory (<50ms total for 800KB)
+// Preload ONLY the idle model immediately at boot so Mochi appears on screen in <15ms!
 useGLTF.preload(MODEL_PATHS.idle, true, true);
-useGLTF.preload(MODEL_PATHS.waving, true, true);
-useGLTF.preload(MODEL_PATHS.alert, true, true);
-useGLTF.preload(MODEL_PATHS.sleeping, true, true);
 
 interface PooledModelProps {
   modelPath: string;
@@ -196,31 +193,31 @@ const SweatDrop: React.FC<{ visible: boolean }> = ({ visible }) => {
   );
 };
 
-// Procedural Ambient Radio Antenna Glow (Real-time transmission halo)
-const SHARED_ANTENNA_GEOMETRY = new THREE.SphereGeometry(0.04, 10, 10);
+// Procedural Focus & Calm Antenna Glow (Gentle cyan/emerald halo without audio)
+const SHARED_ANTENNA_GEOMETRY = new THREE.SphereGeometry(0.04, 8, 8);
 
-const RadioAntennaGlow: React.FC<{ mode: string }> = ({ mode }) => {
+const FocusAntennaGlow: React.FC<{ active: boolean }> = ({ active }) => {
   const lightRef = useRef<THREE.PointLight>(null);
   const meshRef = useRef<THREE.Mesh>(null);
-  const glowColor = '#38bdf8';
+  const glowColor = '#34d399';
 
   useFrame((state) => {
-    if (mode === 'off') return;
-    const t = state.clock.elapsedTime * 3;
-    const pulse = 0.7 + Math.sin(t) * 0.3;
+    if (!active) return;
+    const t = state.clock.elapsedTime * 2.2;
+    const pulse = 0.75 + Math.sin(t) * 0.25;
     if (lightRef.current) {
-      lightRef.current.intensity = pulse * 1.5;
+      lightRef.current.intensity = pulse * 1.3;
     }
     if (meshRef.current) {
       meshRef.current.scale.setScalar(0.85 + pulse * 0.2);
     }
   });
 
-  if (mode === 'off') return null;
+  if (!active) return null;
 
   return (
     <group position={[0, 0.44, 0]}>
-      <pointLight ref={lightRef} color={glowColor} intensity={1.4} distance={1.2} />
+      <pointLight ref={lightRef} color={glowColor} intensity={1.3} distance={1.1} />
       <mesh ref={meshRef} geometry={SHARED_ANTENNA_GEOMETRY}>
         <meshBasicMaterial color={glowColor} transparent opacity={0.65} />
       </mesh>
@@ -241,8 +238,8 @@ export const MochiModel: React.FC<{ isHovered?: boolean }> = ({ isHovered = fals
     soundEnabled,
     isHighSystemLoad,
     systemVitals,
-    radioMode,
-    cycleRadioMode,
+    focusMode,
+    toggleFocusMode,
     showSpeechBubble,
     lang,
   } = useMochiStore();
@@ -284,13 +281,25 @@ export const MochiModel: React.FC<{ isHovered?: boolean }> = ({ isHovered = fals
   });
 
   const [showSparkles, setShowSparkles] = useState(false);
+  const [secondaryModelsLoaded, setSecondaryModelsLoaded] = useState(false);
+
+  // Lazy-load secondary models in background 450ms after Mochi is already visible on screen!
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setSecondaryModelsLoaded(true);
+      useGLTF.preload(MODEL_PATHS.waving, true, true);
+      useGLTF.preload(MODEL_PATHS.alert, true, true);
+      useGLTF.preload(MODEL_PATHS.sleeping, true, true);
+    }, 450);
+    return () => clearTimeout(timer);
+  }, []);
 
   // Initialize event-driven cursor tracking (Zero IPC polling)
   useEffect(() => {
     initGlobalCursorTracking(() => useMochiStore.getState().globalMouseTracking);
   }, []);
 
-  // Proactive working set trim 6 seconds after mount once models and shaders are resident in memory
+  // Proactive working set trim 1.5s after mount once models and shaders are resident in memory
   useEffect(() => {
     const timer = setTimeout(async () => {
       try {
@@ -299,7 +308,7 @@ export const MochiModel: React.FC<{ isHovered?: boolean }> = ({ isHovered = fals
       } catch {
         // Ignore in web preview
       }
-    }, 6000);
+    }, 1500);
     return () => clearTimeout(timer);
   }, []);
 
@@ -401,7 +410,7 @@ export const MochiModel: React.FC<{ isHovered?: boolean }> = ({ isHovered = fals
 
   const handleDoubleClick = (e: { stopPropagation: () => void }) => {
     e.stopPropagation();
-    cycleRadioMode();
+    toggleFocusMode();
   };
 
   useFrame((state, delta) => {
@@ -441,9 +450,11 @@ export const MochiModel: React.FC<{ isHovered?: boolean }> = ({ isHovered = fals
     let throttleModulo = 1; // 1 = every frame (60 FPS hardware VSync)
     if (!isHovered && !isActivelyMoving && !isWaving && !isClicking && !isMorphing) {
       if (displayedState === 'sleeping') {
-        throttleModulo = 5; // 12 FPS during sleep
+        throttleModulo = 6; // 10 FPS during sleep
+      } else if (focusMode) {
+        throttleModulo = 4; // 15 FPS in Focus Mode (calm, minimal resource load)
       } else if (timeSinceMovement > 10000) {
-        throttleModulo = 4; // 15 FPS in deep idle (>10s still)
+        throttleModulo = 5; // 12 FPS in deep idle (>10s still)
       } else {
         throttleModulo = 2; // 30 FPS in calm idle
       }
@@ -587,7 +598,7 @@ export const MochiModel: React.FC<{ isHovered?: boolean }> = ({ isHovered = fals
     // --- 3. Jelly Breathing & Gentle Floating ---
     let floatY = 0;
     let jellyY = 0;
-    const breathRateMultiplier = isHighSystemLoad ? 2.6 : 1.0;
+    const breathRateMultiplier = isHighSystemLoad ? 2.6 : focusMode ? 0.6 : 1.0;
 
     if (isSleeping) {
       floatY = Math.sin(time * 1.2) * 0.02;
@@ -674,11 +685,15 @@ export const MochiModel: React.FC<{ isHovered?: boolean }> = ({ isHovered = fals
   return (
     <group ref={rootGroupRef} onClick={handleClick} onDoubleClick={handleDoubleClick}>
       <group ref={motionGroupRef}>
-        {/* Scene-Graph Object Pooling: All 4 models kept mounted, instant 0.001ms zero-cost visibility switch */}
+        {/* Scene-Graph Object Pooling: Idle is mounted immediately (<15ms); secondary models load lazily */}
         <PooledModel modelPath={MODEL_PATHS.idle} visible={activeKey === 'idle'} />
-        <PooledModel modelPath={MODEL_PATHS.waving} visible={activeKey === 'waving'} />
-        <PooledModel modelPath={MODEL_PATHS.alert} visible={activeKey === 'alert'} />
-        <PooledModel modelPath={MODEL_PATHS.sleeping} visible={activeKey === 'sleeping'} />
+        {(secondaryModelsLoaded || activeKey !== 'idle') && (
+          <>
+            <PooledModel modelPath={MODEL_PATHS.waving} visible={activeKey === 'waving'} />
+            <PooledModel modelPath={MODEL_PATHS.alert} visible={activeKey === 'alert'} />
+            <PooledModel modelPath={MODEL_PATHS.sleeping} visible={activeKey === 'sleeping'} />
+          </>
+        )}
 
         {/* 3D Sleep Bubbles (Never unmounted, zero GPU buffer allocation leak) */}
         <SleepBubbles visible={displayedState === 'sleeping'} />
@@ -689,8 +704,8 @@ export const MochiModel: React.FC<{ isHovered?: boolean }> = ({ isHovered = fals
         {/* 3D Glass Sweat Drop (Beside forehead under heavy system load) */}
         <SweatDrop visible={isHighSystemLoad} />
 
-        {/* 3D Procedural Ambient Radio Antenna Glow */}
-        <RadioAntennaGlow mode={radioMode} />
+        {/* 3D Procedural Focus & Calm Antenna Glow */}
+        <FocusAntennaGlow active={focusMode} />
 
         {/* Transient Sparkles on Click or Waving (Pooled in scene graph, zero shader recreation) */}
         <group visible={displayedState === 'waving' || showSparkles}>

@@ -1,13 +1,15 @@
-import React, { useEffect, useState, useRef } from 'react';
-import {
-  RadialOrbitalMenu,
-  SettingsModal,
-  SpeechBubble,
-  TimeCapsuleModal,
-} from './components/ui';
+import React, { useEffect, useState, useRef, Suspense, lazy } from 'react';
+import { RadialOrbitalMenu, SpeechBubble } from './components/ui';
 import { MochiCanvas } from './components/3d';
 import { useMochiStore } from './store/useMochiStore';
 import { soundFx } from './utils/sound';
+
+const SettingsModal = lazy(() =>
+  import('./components/ui/SettingsModal').then((m) => ({ default: m.SettingsModal }))
+);
+const TimeCapsuleModal = lazy(() =>
+  import('./components/ui/TimeCapsuleModal').then((m) => ({ default: m.TimeCapsuleModal }))
+);
 
 // Sensitive pattern and high-entropy detection for Secret Clipboard Guardian
 function isSensitiveText(text: string): boolean {
@@ -61,7 +63,7 @@ export const App: React.FC = () => {
     isTimeCapsuleModalOpen,
     speechBubble,
     clipboardGuardianEnabled,
-    radioMode,
+    focusMode,
     setSystemVitals,
     setIsHighSystemLoad,
     showSpeechBubble,
@@ -74,6 +76,19 @@ export const App: React.FC = () => {
   const pointerStartRef = useRef<{ x: number; y: number } | null>(null);
   const lastAlertedClipboardRef = useRef<string>('');
   const alertedCapsulesRef = useRef<Set<string>>(new Set());
+
+  // Proactive working set trim 1.5s after mount to immediately flush startup cache from RAM
+  useEffect(() => {
+    const timer = setTimeout(async () => {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        await invoke('trim_memory');
+      } catch {
+        // Ignore in browser
+      }
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, []);
 
   // Window expands ONLY for Settings or TimeCapsule modal (NEVER for speech bubbles, eliminating position jumps!)
   const isModalOpen = isSettingsOpen || isTimeCapsuleModalOpen;
@@ -204,7 +219,7 @@ export const App: React.FC = () => {
 
   // 6. Secret Clipboard Guardian Scanner (Pauses in Focus Mode to respect concentration)
   useEffect(() => {
-    if (!clipboardGuardianEnabled || radioMode !== 'off') return;
+    if (!clipboardGuardianEnabled || focusMode) return;
 
     const checkClipboard = async () => {
       try {
@@ -288,7 +303,7 @@ export const App: React.FC = () => {
 
     const interval = setInterval(checkClipboard, 3500);
     return () => clearInterval(interval);
-  }, [clipboardGuardianEnabled, radioMode, lang, setMascotState, showSpeechBubble, hideSpeechBubble]);
+  }, [clipboardGuardianEnabled, focusMode, lang, setMascotState, showSpeechBubble, hideSpeechBubble]);
 
   // 7. Time Capsule Alarm Watcher
   useEffect(() => {
@@ -395,7 +410,9 @@ export const App: React.FC = () => {
       {/* Side Panel for SettingsModal or TimeCapsuleModal when explicitly opened */}
       {isModalOpen && (
         <div className="flex-1 h-full flex items-center justify-center pointer-events-auto">
-          {isSettingsOpen ? <SettingsModal /> : <TimeCapsuleModal />}
+          <Suspense fallback={null}>
+            {isSettingsOpen ? <SettingsModal /> : <TimeCapsuleModal />}
+          </Suspense>
         </div>
       )}
 

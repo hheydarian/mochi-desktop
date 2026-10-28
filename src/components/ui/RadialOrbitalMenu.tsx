@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { Settings, Pin, Move, X, Clock, Radio } from 'lucide-react';
+import { Settings, Pin, Move, X, Clock, Sparkles } from 'lucide-react';
 import { useMochiStore } from '../../store/useMochiStore';
 import { useTranslation } from '../../locales';
 
@@ -15,8 +15,8 @@ export const RadialOrbitalMenu: React.FC<RadialOrbitalMenuProps> = ({ isVisible 
     toggleAlwaysOnTop,
     isSettingsOpen,
     toggleSettings,
-    radioMode,
-    cycleRadioMode,
+    focusMode,
+    toggleFocusMode,
     setIsTimeCapsuleModalOpen,
     lang,
   } = useMochiStore();
@@ -70,14 +70,13 @@ export const RadialOrbitalMenu: React.FC<RadialOrbitalMenuProps> = ({ isVisible 
     isDanger?: boolean;
   }
 
-  const radioTooltip =
-    radioMode === 'rain'
-      ? lang === 'fa'
-        ? 'حالت تمرکز 🌧️ (فعال)'
-        : 'Focus Mode 🌧️ (Active)'
-      : lang === 'fa'
-      ? 'حالت تمرکز و آرامش 🌧️'
-      : 'Focus Rain Radio 🌧️';
+  const focusTooltip = focusMode
+    ? lang === 'fa'
+      ? 'حالت تمرکز و آرامش (فعال) 🧘'
+      : 'Focus Mode (Active) 🧘'
+    : lang === 'fa'
+    ? 'حالت تمرکز و آرامش 🧘'
+    : 'Focus & Calm Mode 🧘';
 
   const items: OrbItem[] = [
     {
@@ -96,12 +95,12 @@ export const RadialOrbitalMenu: React.FC<RadialOrbitalMenuProps> = ({ isVisible 
       onClick: () => setIsTimeCapsuleModalOpen(true),
     },
     {
-      id: 'radio',
-      icon: <Radio className="w-3.5 h-3.5 text-emerald-200" />,
-      tooltip: radioTooltip,
-      active: radioMode !== 'off',
+      id: 'focus',
+      icon: <Sparkles className="w-3.5 h-3.5 text-emerald-200" />,
+      tooltip: focusTooltip,
+      active: focusMode,
       activeClass: 'text-emerald-300 ring-2 ring-emerald-400/80 bg-emerald-500/30 shadow-emerald-500/40 animate-pulse',
-      onClick: cycleRadioMode,
+      onClick: toggleFocusMode,
     },
     {
       id: 'pin',
