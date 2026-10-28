@@ -18,6 +18,7 @@ export const RadialOrbitalMenu: React.FC<RadialOrbitalMenuProps> = ({ isVisible 
     radioMode,
     cycleRadioMode,
     setIsTimeCapsuleModalOpen,
+    lang,
   } = useMochiStore();
   const { t } = useTranslation();
   const [activeTooltip, setActiveTooltip] = useState<string | null>(null);
@@ -45,10 +46,10 @@ export const RadialOrbitalMenu: React.FC<RadialOrbitalMenuProps> = ({ isVisible 
     }
   };
 
-  // Center of Mochi in 240x260 viewport
-  const centerX = 120;
-  const centerY = 135;
-  const radius = 76;
+  // Center of Mochi in 200x230 viewport
+  const centerX = 100;
+  const centerY = 115;
+  const radius = 68;
 
   // Smart Screen-Roof Adaptation: If window is close to screen roof (<120px), open arc downwards
   const isNearTop = typeof window !== 'undefined' && window.screenY < 120;
@@ -71,12 +72,12 @@ export const RadialOrbitalMenu: React.FC<RadialOrbitalMenuProps> = ({ isVisible 
 
   const radioTooltip =
     radioMode === 'rain'
-      ? 'رادیو: باران 🌧️'
-      : radioMode === 'fireplace'
-      ? 'رادیو: شومینه 🔥'
-      : radioMode === 'binaural'
-      ? 'رادیو: تمرکز 🎧'
-      : 'رادیوی آرامش 📻';
+      ? lang === 'fa'
+        ? 'حالت تمرکز 🌧️ (فعال)'
+        : 'Focus Mode 🌧️ (Active)'
+      : lang === 'fa'
+      ? 'حالت تمرکز و آرامش 🌧️'
+      : 'Focus Rain Radio 🌧️';
 
   const items: OrbItem[] = [
     {
@@ -96,10 +97,10 @@ export const RadialOrbitalMenu: React.FC<RadialOrbitalMenuProps> = ({ isVisible 
     },
     {
       id: 'radio',
-      icon: <Radio className="w-3.5 h-3.5 text-pink-200" />,
+      icon: <Radio className="w-3.5 h-3.5 text-emerald-200" />,
       tooltip: radioTooltip,
       active: radioMode !== 'off',
-      activeClass: 'text-pink-300 ring-2 ring-pink-400/80 bg-pink-500/30 shadow-pink-500/40 animate-pulse',
+      activeClass: 'text-emerald-300 ring-2 ring-emerald-400/80 bg-emerald-500/30 shadow-emerald-500/40 animate-pulse',
       onClick: cycleRadioMode,
     },
     {

@@ -25,12 +25,10 @@ import {
   Trash2,
   ShieldAlert,
   Activity,
-  FileImage,
   Plus,
 } from 'lucide-react';
 import { useMochiStore } from '../../store/useMochiStore';
 import { useTranslation } from '../../locales';
-import { type RadioMode } from '../../utils/sound';
 
 interface CapsuleToggleProps {
   icon: React.ReactNode;
@@ -117,8 +115,6 @@ export const SettingsModal: React.FC = () => {
     setClipboardGuardianEnabled,
     systemVitalsEnabled,
     setSystemVitalsEnabled,
-    autoSanitizeExif,
-    setAutoSanitizeExif,
   } = useMochiStore();
 
   const { t } = useTranslation();
@@ -477,40 +473,29 @@ export const SettingsModal: React.FC = () => {
               className="space-y-1.5 max-h-[220px] overflow-y-auto pr-0.5"
               style={{ scrollbarWidth: 'none' }}
             >
-              {/* 1. Ambient Radio */}
-              <div className="p-2 rounded-xl bg-white/[0.04] border border-white/[0.06] space-y-1.5">
+              {/* 1. Ambient Focus Radio */}
+              <div className="p-2 rounded-xl bg-white/[0.04] border border-white/[0.06] space-y-2">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-1.5">
                     <Radio className="w-3.5 h-3.5 text-pink-300" />
-                    <span className="text-[11px] font-medium text-white/95">{t.settings.radioTitle}</span>
+                    <span className="text-[11px] font-medium text-white/95">
+                      {lang === 'fa' ? 'رادیو تمرکز و آرامش' : 'Focus Ambient Sound'}
+                    </span>
                   </div>
-                  <span className="text-[9px] text-pink-300/80 font-mono font-semibold">
-                    {radioMode !== 'off' ? radioMode.toUpperCase() : 'OFF'}
-                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setRadioMode(radioMode === 'off' ? 'rain' : 'off')}
+                    className={`px-2.5 py-1 rounded-lg text-[9px] font-semibold transition-all cursor-pointer ${
+                      radioMode !== 'off'
+                        ? 'bg-emerald-500 text-white shadow-sm'
+                        : 'bg-white/10 hover:bg-white/20 text-white/70'
+                    }`}
+                  >
+                    {radioMode !== 'off'
+                      ? (lang === 'fa' ? 'روشن (حالت تمرکز)' : 'ON (Focus Mode)')
+                      : (lang === 'fa' ? 'خاموش' : 'OFF')}
+                  </button>
                 </div>
-                {/* Mode Selector */}
-                <div className="grid grid-cols-4 gap-1">
-                  {[
-                    { id: 'rain', label: t.settings.radioRain },
-                    { id: 'fireplace', label: t.settings.radioFireplace },
-                    { id: 'binaural', label: t.settings.radioBinaural },
-                    { id: 'off', label: t.settings.radioOff },
-                  ].map((item) => (
-                    <button
-                      key={item.id}
-                      type="button"
-                      onClick={() => setRadioMode(item.id as RadioMode)}
-                      className={`py-1 px-0.5 rounded-lg text-[9px] font-medium transition-all cursor-pointer truncate ${
-                        radioMode === item.id
-                          ? 'bg-pink-500 text-white shadow-sm'
-                          : 'bg-white/5 hover:bg-white/10 text-white/70'
-                      }`}
-                    >
-                      {item.label}
-                    </button>
-                  ))}
-                </div>
-                {/* Volume Slider */}
                 {radioMode !== 'off' && (
                   <div className="flex items-center gap-2 pt-0.5">
                     <Volume2 className="w-3 h-3 text-white/50" />
@@ -589,14 +574,6 @@ export const SettingsModal: React.FC = () => {
                 desc={t.settings.systemVitalsDesc}
                 checked={systemVitalsEnabled}
                 onChange={setSystemVitalsEnabled}
-              />
-
-              <CapsuleToggle
-                icon={<FileImage className="w-3.5 h-3.5 text-emerald-300" />}
-                title={t.settings.exifSanitizer}
-                desc={t.settings.exifSanitizerDesc}
-                checked={autoSanitizeExif}
-                onChange={setAutoSanitizeExif}
               />
             </motion.div>
           )}

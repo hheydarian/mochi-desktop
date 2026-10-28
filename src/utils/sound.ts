@@ -281,27 +281,27 @@ export const soundFx = {
 };
 
 // ============================================================================
-// Procedural Web Audio Ambient Radio Synthesizer (Zero Assets, 100% Client-side)
-// Modes: 'rain' | 'fireplace' | 'binaural' | 'off'
+// Procedural Web Audio Ambient Radio Synthesizer (Single Focus Rain Soundscape)
+// Zero CPU, 0 timer allocations, 100% offline
 // ============================================================================
 
-export type RadioMode = 'off' | 'rain' | 'fireplace' | 'binaural';
+export type RadioMode = 'off' | 'rain';
 
 interface RadioState {
   currentMode: RadioMode;
   masterGain: GainNode | null;
-  activeNodes: { stop: () => void }[];
-  intervalIds: number[];
+  activeSource: AudioBufferSourceNode | null;
   volume: number;
 }
 
 const radioState: RadioState = {
   currentMode: 'off',
   masterGain: null,
-  activeNodes: [],
-  intervalIds: [],
+  activeSource: null,
   volume: 0.5,
 };
+
+let cachedRainBuffer: AudioBuffer | null = null;
 
 export const ambientRadio = {
   getMode: (): RadioMode => radioState.currentMode,
@@ -318,28 +318,27 @@ export const ambientRadio = {
 
   stop: () => {
     if (radioState.currentMode === 'off') return;
-    radioState.intervalIds.forEach((id) => clearInterval(id));
-    radioState.intervalIds = [];
 
     const ctx = getAudioContext();
     if (radioState.masterGain && ctx) {
-      radioState.masterGain.gain.setTargetAtTime(0.0001, ctx.currentTime, 0.08);
+      radioState.masterGain.gain.setTargetAtTime(0.0001, ctx.currentTime, 0.05);
       setTimeout(() => {
-        radioState.activeNodes.forEach((node) => {
+        if (radioState.activeSource) {
           try {
-            node.stop();
+            radioState.activeSource.stop();
+            radioState.activeSource.disconnect();
           } catch {}
-        });
-        radioState.activeNodes = [];
+          radioState.activeSource = null;
+        }
         radioState.masterGain = null;
         radioState.currentMode = 'off';
-      }, 100);
+      }, 60);
     } else {
       radioState.currentMode = 'off';
     }
   },
 
-  start: (mode: 'rain' | 'fireplace' | 'binaural', volume?: number) => {
+  start: (volume?: number) => {
     if (volume !== undefined) {
       radioState.volume = Math.max(0, Math.min(1, volume));
     }
@@ -350,13 +349,13 @@ export const ambientRadio = {
 
     const masterGain = ctx.createGain();
     masterGain.gain.setValueAtTime(0.001, ctx.currentTime);
-    masterGain.gain.exponentialRampToValueAtTime(radioState.volume * 0.35, ctx.currentTime + 0.3);
+    masterGain.gain.linearRampToValueAtTime(radioState.volume * 0.35, ctx.currentTime + 0.3);
     masterGain.connect(ctx.destination);
     radioState.masterGain = masterGain;
-    radioState.currentMode = mode;
+    radioState.currentMode = 'rain';
 
-    if (mode === 'rain') {
-      // 1. Procedural Pink Noise Buffer for continuous gentle rain
+    // Generate or reuse cached 2-second pink noise buffer
+    if (!cachedRainBuffer) {
       const bufferSize = ctx.sampleRate * 2;
       const noiseBuffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
       const output = noiseBuffer.getChannelData(0);
@@ -372,145 +371,22 @@ export const ambientRadio = {
         output[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362) * 0.11;
         b6 = white * 0.115926;
       }
-
-      const whiteNoise = ctx.createBufferSource();
-      whiteNoise.buffer = noiseBuffer;
-      whiteNoise.loop = true;
-
-      // Lowpass filter to simulate rain behind a window pane
-      const filter = ctx.createBiquadFilter();
-      filter.type = 'lowpass';
-      filter.frequency.setValueAtTime(850, ctx.currentTime);
-
-      whiteNoise.connect(filter);
-      filter.connect(masterGain);
-      whiteNoise.start();
-
-      radioState.activeNodes.push({
-        stop: () => whiteNoise.stop(),
-      });
-
-      // Subtle water droplet modulation
-      const dropTimer = window.setInterval(() => {
-        if (Math.random() > 0.45 || radioState.currentMode !== 'rain') return;
-        try {
-          const osc = ctx.createOscillator();
-          const dropGain = ctx.createGain();
-          const freq = 1200 + Math.random() * 800;
-          osc.type = 'sine';
-          osc.frequency.setValueAtTime(freq, ctx.currentTime);
-          osc.frequency.exponentialRampToValueAtTime(freq * 0.6, ctx.currentTime + 0.04);
-          dropGain.gain.setValueAtTime(0.04, ctx.currentTime);
-          dropGain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.05);
-          osc.connect(dropGain);
-          dropGain.connect(masterGain);
-          osc.start();
-          osc.stop(ctx.currentTime + 0.05);
-        } catch {}
-      }, 350);
-
-      radioState.intervalIds.push(dropTimer);
-    } else if (mode === 'fireplace') {
-      // 1. Warm low rumble hearth base
-      const bufferSize = ctx.sampleRate * 2;
-      const noiseBuffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
-      const output = noiseBuffer.getChannelData(0);
-      let lastOut = 0.0;
-      for (let i = 0; i < bufferSize; i++) {
-        const white = Math.random() * 2 - 1;
-        output[i] = (lastOut + 0.02 * white) / 1.02;
-        lastOut = output[i];
-        output[i] *= 3.5;
-      }
-
-      const rumbleSource = ctx.createBufferSource();
-      rumbleSource.buffer = noiseBuffer;
-      rumbleSource.loop = true;
-
-      const rumbleFilter = ctx.createBiquadFilter();
-      rumbleFilter.type = 'lowpass';
-      rumbleFilter.frequency.setValueAtTime(140, ctx.currentTime);
-
-      rumbleSource.connect(rumbleFilter);
-      rumbleFilter.connect(masterGain);
-      rumbleSource.start();
-
-      radioState.activeNodes.push({
-        stop: () => rumbleSource.stop(),
-      });
-
-      // 2. Random procedural crackle pulses
-      const crackleTimer = window.setInterval(() => {
-        if (radioState.currentMode !== 'fireplace') return;
-        const crackleCount = Math.floor(Math.random() * 3) + 1;
-        for (let c = 0; c < crackleCount; c++) {
-          setTimeout(() => {
-            if (radioState.currentMode !== 'fireplace') return;
-            try {
-              const buffer = ctx.createBuffer(1, 80, ctx.sampleRate);
-              const data = buffer.getChannelData(0);
-              for (let i = 0; i < 80; i++) {
-                data[i] = (Math.random() * 2 - 1) * Math.exp(-i / 15);
-              }
-              const crackle = ctx.createBufferSource();
-              crackle.buffer = buffer;
-              const crackleGain = ctx.createGain();
-              crackleGain.gain.setValueAtTime(0.08 + Math.random() * 0.12, ctx.currentTime);
-              crackle.connect(crackleGain);
-              crackleGain.connect(masterGain);
-              crackle.start();
-            } catch {}
-          }, Math.random() * 220);
-        }
-      }, 180);
-
-      radioState.intervalIds.push(crackleTimer);
-    } else if (mode === 'binaural') {
-      // Deep focus 10Hz Alpha Binaural Wave (Left = 200Hz, Right = 210Hz)
-      const merger = ctx.createChannelMerger(2);
-
-      const oscLeft = ctx.createOscillator();
-      oscLeft.type = 'sine';
-      oscLeft.frequency.setValueAtTime(200, ctx.currentTime);
-      const gainLeft = ctx.createGain();
-      gainLeft.gain.setValueAtTime(0.3, ctx.currentTime);
-      oscLeft.connect(gainLeft);
-      gainLeft.connect(merger, 0, 0);
-
-      const oscRight = ctx.createOscillator();
-      oscRight.type = 'sine';
-      oscRight.frequency.setValueAtTime(210, ctx.currentTime); // +10Hz Alpha beat
-      const gainRight = ctx.createGain();
-      gainRight.gain.setValueAtTime(0.3, ctx.currentTime);
-      oscRight.connect(gainRight);
-      gainRight.connect(merger, 0, 1);
-
-      // Warm background sub-harmonic pad (100Hz triangle wave)
-      const subPad = ctx.createOscillator();
-      subPad.type = 'triangle';
-      subPad.frequency.setValueAtTime(100, ctx.currentTime);
-      const subFilter = ctx.createBiquadFilter();
-      subFilter.type = 'lowpass';
-      subFilter.frequency.setValueAtTime(220, ctx.currentTime);
-      const subGain = ctx.createGain();
-      subGain.gain.setValueAtTime(0.12, ctx.currentTime);
-      subPad.connect(subFilter);
-      subFilter.connect(subGain);
-      subGain.connect(masterGain);
-
-      merger.connect(masterGain);
-
-      oscLeft.start();
-      oscRight.start();
-      subPad.start();
-
-      radioState.activeNodes.push({
-        stop: () => {
-          oscLeft.stop();
-          oscRight.stop();
-          subPad.stop();
-        },
-      });
+      cachedRainBuffer = noiseBuffer;
     }
+
+    const whiteNoise = ctx.createBufferSource();
+    whiteNoise.buffer = cachedRainBuffer;
+    whiteNoise.loop = true;
+
+    // Warm Lowpass filter (850Hz) simulating gentle rain behind a window
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(850, ctx.currentTime);
+
+    whiteNoise.connect(filter);
+    filter.connect(masterGain);
+    whiteNoise.start();
+
+    radioState.activeSource = whiteNoise;
   },
 };

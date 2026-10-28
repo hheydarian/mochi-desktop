@@ -202,25 +202,17 @@ const SHARED_ANTENNA_GEOMETRY = new THREE.SphereGeometry(0.04, 10, 10);
 const RadioAntennaGlow: React.FC<{ mode: string }> = ({ mode }) => {
   const lightRef = useRef<THREE.PointLight>(null);
   const meshRef = useRef<THREE.Mesh>(null);
-
-  const glowColor =
-    mode === 'rain'
-      ? '#38bdf8'
-      : mode === 'fireplace'
-      ? '#f97316'
-      : mode === 'binaural'
-      ? '#a855f7'
-      : '#ffffff';
+  const glowColor = '#38bdf8';
 
   useFrame((state) => {
     if (mode === 'off') return;
-    const t = state.clock.elapsedTime * 4;
-    const pulse = 0.6 + Math.sin(t) * 0.35;
+    const t = state.clock.elapsedTime * 3;
+    const pulse = 0.7 + Math.sin(t) * 0.3;
     if (lightRef.current) {
-      lightRef.current.intensity = pulse * 1.8;
+      lightRef.current.intensity = pulse * 1.5;
     }
     if (meshRef.current) {
-      meshRef.current.scale.setScalar(0.85 + pulse * 0.25);
+      meshRef.current.scale.setScalar(0.85 + pulse * 0.2);
     }
   });
 
@@ -228,7 +220,7 @@ const RadioAntennaGlow: React.FC<{ mode: string }> = ({ mode }) => {
 
   return (
     <group position={[0, 0.44, 0]}>
-      <pointLight ref={lightRef} color={glowColor} intensity={1.5} distance={1.2} />
+      <pointLight ref={lightRef} color={glowColor} intensity={1.4} distance={1.2} />
       <mesh ref={meshRef} geometry={SHARED_ANTENNA_GEOMETRY}>
         <meshBasicMaterial color={glowColor} transparent opacity={0.65} />
       </mesh>

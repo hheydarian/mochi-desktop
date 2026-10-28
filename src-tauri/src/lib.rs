@@ -30,7 +30,6 @@ mod win_mem {
     }
 
     /// Super-fast zero-overhead memory trim for the host process (< 0.005ms)
-    /// Never enumerates or scans other system processes
     pub fn trim_host_working_set() {
         unsafe {
             let heap = GetProcessHeap();
@@ -75,11 +74,10 @@ fn get_global_cursor_position(window: tauri::Window) -> (f64, f64) {
             GetCursorPos(&mut pt);
         }
 
-        // Deadzone Filtering: if cursor hasn't moved beyond 3 pixels, return cached relative position
         let last_x = LAST_RAW_CURSOR_X.load(Ordering::Relaxed);
         let last_y = LAST_RAW_CURSOR_Y.load(Ordering::Relaxed);
 
-        if (pt.x - last_x).abs() < 3 && (pt.y - last_y).abs() < 3 {
+        if (pt.x - last_x).abs() < 4 && (pt.y - last_y).abs() < 4 {
             if let Ok(cached) = CACHED_REL_POS.lock() {
                 return *cached;
             }
@@ -149,39 +147,38 @@ fn set_settings_open(window: tauri::Window, open: bool) -> Result<String, String
     let scale = monitor.scale_factor();
     let screen_size = monitor.size();
     let screen_w = screen_size.width as i32;
-    let screen_h = screen_size.height as i32;
+
+    let base_w = (320.0 * scale) as i32;
+    let base_h = (280.0 * scale) as i32;
+    let exp_w = (560.0 * scale) as i32;
+    let exp_h = (340.0 * scale) as i32;
+
+    let delta_w = exp_w - base_w;
+    let delta_h = exp_h - base_h;
 
     let current_pos = window.outer_position().map_err(|e| e.to_string())?;
     let current_size = window.outer_size().map_err(|e| e.to_string())?;
-    let current_logical_w = current_size.width as f64 / scale;
+    let is_currently_expanded = (current_size.width as i32) >= (exp_w - 20);
 
     if open {
-        let new_w = (560.0 * scale) as i32;
-        let new_h = (360.0 * scale) as i32;
-        let shift_w = (320.0 * scale) as i32;
-        let shift_h = (100.0 * scale) as i32;
+        if is_currently_expanded {
+            let side = SETTINGS_OPEN_SIDE.lock().ok().and_then(|s| s.clone()).unwrap_or_else(|| "left".to_string());
+            return Ok(side);
+        }
 
-        let mochi_center_x = current_pos.x + (current_size.width as i32 / 2);
+        let mochi_center_x = current_pos.x + (base_w / 2);
         let is_left_side = mochi_center_x < (screen_w / 2);
 
-        let (mut new_x, side) = if is_left_side {
-            // Mochi is on left side of monitor -> open panel to the RIGHT of Mochi
+        // MATHEMATICALLY ZERO-JUMP ANCHORING:
+        // When Mochi is on right: anchor bottom-right corner. Window expands leftward by delta_w.
+        // When Mochi is on left: anchor bottom-left corner. Window expands rightward.
+        let (new_x, side) = if is_left_side {
             (current_pos.x, "right")
         } else {
-            // Mochi is on right side of monitor -> open panel to the LEFT of Mochi
-            (current_pos.x - shift_w, "left")
+            (current_pos.x - delta_w, "left")
         };
 
-        let mut new_y = current_pos.y - shift_h;
-
-        // Mandatory Clamping: window MUST never clip beyond any screen edge
-        let min_x = (12.0 * scale) as i32;
-        let max_x = (screen_w - new_w - (12.0 * scale) as i32).max(min_x);
-        new_x = new_x.clamp(min_x, max_x);
-
-        let min_y = (12.0 * scale) as i32;
-        let max_y = (screen_h - new_h - (48.0 * scale) as i32).max(min_y);
-        new_y = new_y.clamp(min_y, max_y);
+        let new_y = current_pos.y - delta_h;
 
         if let Ok(mut saved_side) = SETTINGS_OPEN_SIDE.lock() {
             *saved_side = Some(side.to_string());
@@ -189,51 +186,32 @@ fn set_settings_open(window: tauri::Window, open: bool) -> Result<String, String
 
         window
             .set_size(tauri::Size::Physical(tauri::PhysicalSize {
-                width: new_w as u32,
-                height: new_h as u32,
+                width: exp_w as u32,
+                height: exp_h as u32,
             }))
             .map_err(|e| e.to_string())?;
         window
             .set_position(tauri::Position::Physical(tauri::PhysicalPosition {
-                x: new_x,
-                y: new_y,
+                x: new_x.max(0),
+                y: new_y.max(0),
             }))
             .map_err(|e| e.to_string())?;
 
         return Ok(side.to_string());
     } else {
-        // Collapsing back to normal 240x260
-        let new_w = (240.0 * scale) as i32;
-        let new_h = (260.0 * scale) as i32;
-        let shift_w = (320.0 * scale) as i32;
-        let shift_h = (100.0 * scale) as i32;
+        if !is_currently_expanded {
+            return Ok("closed".to_string());
+        }
 
         let previous_side = SETTINGS_OPEN_SIDE.lock().ok().and_then(|s| s.clone());
 
-        let mut new_x = if current_logical_w >= 400.0 {
-            if previous_side.as_deref() == Some("left") {
-                current_pos.x + shift_w
-            } else {
-                current_pos.x
-            }
+        let new_x = if previous_side.as_deref() == Some("left") {
+            current_pos.x + delta_w
         } else {
             current_pos.x
         };
 
-        let mut new_y = if current_logical_w >= 400.0 {
-            current_pos.y + shift_h
-        } else {
-            current_pos.y
-        };
-
-        // Clamp collapsed window within screen bounds
-        let min_x = (4.0 * scale) as i32;
-        let max_x = (screen_w - new_w - (4.0 * scale) as i32).max(min_x);
-        new_x = new_x.clamp(min_x, max_x);
-
-        let min_y = (4.0 * scale) as i32;
-        let max_y = (screen_h - new_h - (4.0 * scale) as i32).max(min_y);
-        new_y = new_y.clamp(min_y, max_y);
+        let new_y = current_pos.y + delta_h;
 
         if let Ok(mut saved_side) = SETTINGS_OPEN_SIDE.lock() {
             *saved_side = None;
@@ -241,14 +219,14 @@ fn set_settings_open(window: tauri::Window, open: bool) -> Result<String, String
 
         window
             .set_size(tauri::Size::Physical(tauri::PhysicalSize {
-                width: new_w as u32,
-                height: new_h as u32,
+                width: base_w as u32,
+                height: base_h as u32,
             }))
             .map_err(|e| e.to_string())?;
         window
             .set_position(tauri::Position::Physical(tauri::PhysicalPosition {
-                x: new_x,
-                y: new_y,
+                x: new_x.max(0),
+                y: new_y.max(0),
             }))
             .map_err(|e| e.to_string())?;
 
@@ -268,21 +246,20 @@ fn reset_window_position(window: tauri::Window) -> Result<(), String> {
     let screen_size = monitor.size();
     let scale = monitor.scale_factor();
 
-    // Reset size to 240x260 if expanded
-    let new_w = (240.0 * scale) as i32;
-    let new_h = (260.0 * scale) as i32;
+    let base_w = (320.0 * scale) as i32;
+    let base_h = (280.0 * scale) as i32;
     let margin_x = (4.0 * scale) as i32;
     let margin_y = (4.0 * scale) as i32;
-    let x = screen_size.width as i32 - new_w - margin_x;
-    let y = screen_size.height as i32 - new_h - margin_y;
+    let x = screen_size.width as i32 - base_w - margin_x;
+    let y = screen_size.height as i32 - base_h - margin_y;
 
     if let Ok(mut saved_side) = SETTINGS_OPEN_SIDE.lock() {
         *saved_side = None;
     }
 
     let _ = window.set_size(tauri::Size::Physical(tauri::PhysicalSize {
-        width: new_w as u32,
-        height: new_h as u32,
+        width: base_w as u32,
+        height: base_h as u32,
     }));
     window
         .set_position(tauri::Position::Physical(tauri::PhysicalPosition { x, y }))
@@ -378,140 +355,6 @@ fn read_clipboard_text() -> Result<String, String> {
     }
 }
 
-// Native EXIF/Metadata Stripper Functions (0% UI freeze, 100% loss-free)
-fn sanitize_jpeg(bytes: &[u8]) -> Vec<u8> {
-    if bytes.len() < 4 || bytes[0] != 0xFF || bytes[1] != 0xD8 {
-        return bytes.to_vec();
-    }
-    let mut out = Vec::with_capacity(bytes.len());
-    out.extend_from_slice(&[0xFF, 0xD8]); // SOI
-
-    let mut i = 2;
-    while i < bytes.len() {
-        if bytes[i] != 0xFF {
-            out.push(bytes[i]);
-            i += 1;
-            continue;
-        }
-        while i < bytes.len() && bytes[i] == 0xFF {
-            i += 1;
-        }
-        if i >= bytes.len() {
-            break;
-        }
-        let marker = bytes[i];
-        i += 1;
-
-        if marker == 0xD9 {
-            out.extend_from_slice(&[0xFF, 0xD9]);
-            break;
-        } else if marker == 0xDA {
-            out.extend_from_slice(&[0xFF, 0xDA]);
-            out.extend_from_slice(&bytes[i..]);
-            break;
-        } else if (0xD0..=0xD7).contains(&marker) || marker == 0x00 {
-            out.extend_from_slice(&[0xFF, marker]);
-        } else {
-            if i + 1 >= bytes.len() {
-                break;
-            }
-            let seg_len = ((bytes[i] as usize) << 8) | (bytes[i + 1] as usize);
-            let seg_end = (i + seg_len).min(bytes.len());
-
-            // Skip EXIF/XMP (0xE1), FlashPix (0xE2), Photoshop IPTC (0xED), Comments (0xFE)
-            let should_skip = marker == 0xE1 || marker == 0xE2 || marker == 0xED || marker == 0xFE;
-            if !should_skip {
-                out.extend_from_slice(&[0xFF, marker]);
-                out.extend_from_slice(&bytes[i..seg_end]);
-            }
-            i = seg_end;
-        }
-    }
-    out
-}
-
-fn sanitize_png(bytes: &[u8]) -> Vec<u8> {
-    const PNG_SIG: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
-    if bytes.len() < 8 || &bytes[0..8] != PNG_SIG {
-        return bytes.to_vec();
-    }
-    let mut out = Vec::with_capacity(bytes.len());
-    out.extend_from_slice(PNG_SIG);
-
-    let mut i = 8;
-    while i + 12 <= bytes.len() {
-        let length = ((bytes[i] as usize) << 24)
-            | ((bytes[i + 1] as usize) << 16)
-            | ((bytes[i + 2] as usize) << 8)
-            | (bytes[i + 3] as usize);
-        let chunk_type = &bytes[i + 4..i + 8];
-        let chunk_total_len = 12 + length;
-        let chunk_end = (i + chunk_total_len).min(bytes.len());
-
-        let should_skip = chunk_type == b"eXIf"
-            || chunk_type == b"tEXt"
-            || chunk_type == b"zTXt"
-            || chunk_type == b"iTXt";
-
-        if !should_skip {
-            out.extend_from_slice(&bytes[i..chunk_end]);
-        }
-
-        if chunk_type == b"IEND" {
-            break;
-        }
-        i = chunk_end;
-    }
-    out
-}
-
-#[tauri::command]
-fn sanitize_image_file(file_path: String) -> Result<String, String> {
-    use std::path::Path;
-    let path = Path::new(&file_path);
-    if !path.exists() {
-        return Err("File does not exist".to_string());
-    }
-
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("image");
-    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("png").to_lowercase();
-    let clean_filename = format!("{}_clean.{}", stem, ext);
-    let clean_path = parent.join(clean_filename);
-
-    let bytes = std::fs::read(&path).map_err(|e| format!("Failed to read file: {}", e))?;
-    if bytes.len() < 12 {
-        return Err("File is too small".to_string());
-    }
-
-    let sanitized_bytes = if ext == "jpg" || ext == "jpeg" {
-        sanitize_jpeg(&bytes)
-    } else if ext == "png" {
-        sanitize_png(&bytes)
-    } else {
-        bytes
-    };
-
-    std::fs::write(&clean_path, &sanitized_bytes).map_err(|e| format!("Failed to write clean image: {}", e))?;
-    clean_path.to_str().map(|s| s.to_string()).ok_or_else(|| "Invalid UTF-8 path".to_string())
-}
-
-#[tauri::command]
-fn open_file_in_folder(path: String) -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    {
-        std::process::Command::new("explorer")
-            .arg(format!("/select,{}", path))
-            .spawn()
-            .map_err(|e| e.to_string())?;
-        Ok(())
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        Ok(())
-    }
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     #[cfg(target_os = "windows")]
@@ -549,8 +392,8 @@ pub fn run() {
                 if let Ok(Some(monitor)) = window.current_monitor() {
                     let screen_size = monitor.size();
                     let scale_factor = monitor.scale_factor();
-                    let win_width = (240.0 * scale_factor) as i32;
-                    let win_height = (260.0 * scale_factor) as i32;
+                    let win_width = (320.0 * scale_factor) as i32;
+                    let win_height = (280.0 * scale_factor) as i32;
                     let margin_x = (4.0 * scale_factor) as i32;
                     let margin_y = (4.0 * scale_factor) as i32;
                     let x = screen_size.width as i32 - win_width - margin_x;
@@ -703,7 +546,7 @@ pub fn run() {
                 }
             });
 
-            // Ultra-Light Native Cursor Tracking Thread with Adaptive Governor
+            // Ultra-Light Native Cursor Tracking Thread (120ms gentle sleep, 0.00% CPU)
             let app_handle_clone = app.handle().clone();
             std::thread::spawn(move || {
                 let mut last_raw_x = -9999;
@@ -713,7 +556,6 @@ pub fn run() {
                 let mut cached_span_x = 960.0;
                 let mut cached_span_y = 540.0;
                 let mut monitor_refresh_tick = 0u32;
-                let mut still_ticks = 0u32;
 
                 #[repr(C)]
                 #[derive(Default, Copy, Clone)]
@@ -727,15 +569,7 @@ pub fn run() {
                 }
 
                 loop {
-                    let sleep_ms = if still_ticks > 40 {
-                        100 // Idle > 1.2s: 10Hz poll (0.00% CPU)
-                    } else if still_ticks > 15 {
-                        60 // Idle > 0.4s: ~16Hz poll
-                    } else {
-                        40 // Active: 25Hz poll (silky smooth visual damping)
-                    };
-
-                    std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
+                    std::thread::sleep(std::time::Duration::from_millis(120));
 
                     let Some(window) = app_handle_clone.get_webview_window("main") else {
                         continue;
@@ -743,7 +577,7 @@ pub fn run() {
 
                     let is_visible = window.is_visible().unwrap_or(false);
                     if !is_visible {
-                        std::thread::sleep(std::time::Duration::from_millis(500));
+                        std::thread::sleep(std::time::Duration::from_millis(600));
                         continue;
                     }
 
@@ -752,16 +586,14 @@ pub fn run() {
                         GetCursorPos(&mut pt);
                     }
 
-                    if (pt.x - last_raw_x).abs() < 4 && (pt.y - last_raw_y).abs() < 4 {
-                        still_ticks = still_ticks.saturating_add(1);
+                    if (pt.x - last_raw_x).abs() < 6 && (pt.y - last_raw_y).abs() < 6 {
                         continue;
                     }
 
-                    still_ticks = 0;
                     last_raw_x = pt.x;
                     last_raw_y = pt.y;
 
-                    if monitor_refresh_tick % 50 == 0 {
+                    if monitor_refresh_tick % 30 == 0 {
                         if let Ok(Some(monitor)) = window.current_monitor() {
                             let size = monitor.size();
                             cached_span_x = (size.width as f64 / 2.0).max(1.0);
@@ -780,7 +612,7 @@ pub fn run() {
                         let rel_x = ((pt.x as f64 - center_x) / cached_span_x).clamp(-1.0, 1.0);
                         let rel_y = ((pt.y as f64 - center_y) / cached_span_y).clamp(-1.0, 1.0);
 
-                        if (rel_x - last_emitted_rel_x).abs() > 0.008 || (rel_y - last_emitted_rel_y).abs() > 0.008 {
+                        if (rel_x - last_emitted_rel_x).abs() > 0.012 || (rel_y - last_emitted_rel_y).abs() > 0.012 {
                             last_emitted_rel_x = rel_x;
                             last_emitted_rel_y = rel_y;
                             let _ = app_handle_clone.emit("cursor-move", (rel_x, rel_y));
@@ -803,9 +635,7 @@ pub fn run() {
             show_window_from_tray,
             quit_app,
             clear_clipboard,
-            read_clipboard_text,
-            sanitize_image_file,
-            open_file_in_folder
+            read_clipboard_text
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

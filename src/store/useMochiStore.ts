@@ -61,10 +61,9 @@ export interface MochiStoreState {
   animSpeed: AnimationSpeed;
   soundEnabled: boolean;
 
-  // Powers (Module 1 - 6)
+  // Powers (Module 1 - 5)
   clipboardGuardianEnabled: boolean;
   systemVitalsEnabled: boolean;
-  autoSanitizeExif: boolean;
   radioMode: RadioMode;
   radioVolume: number;
   vitalsThreshold: number; // Default 88%
@@ -101,7 +100,6 @@ export interface MochiStoreState {
   // Powers Actions
   setClipboardGuardianEnabled: (enabled: boolean) => void;
   setSystemVitalsEnabled: (enabled: boolean) => void;
-  setAutoSanitizeExif: (enabled: boolean) => void;
   setRadioMode: (mode: RadioMode) => void;
   cycleRadioMode: () => void;
   setRadioVolume: (vol: number) => void;
@@ -144,7 +142,6 @@ export const useMochiStore = create<MochiStoreState>()(
       // Powers defaults
       clipboardGuardianEnabled: true,
       systemVitalsEnabled: true,
-      autoSanitizeExif: true,
       radioMode: 'off',
       radioVolume: 0.5,
       vitalsThreshold: 88,
@@ -283,26 +280,20 @@ export const useMochiStore = create<MochiStoreState>()(
         set({ systemVitalsEnabled: enabled });
       },
 
-      setAutoSanitizeExif: (enabled) => {
-        if (get().soundEnabled) soundFx.glassTick();
-        set({ autoSanitizeExif: enabled });
-      },
-
       setRadioMode: (mode) => {
         if (mode === 'off') {
           ambientRadio.stop();
+          set({ radioMode: 'off' });
         } else {
-          ambientRadio.start(mode, get().radioVolume);
+          ambientRadio.start(get().radioVolume);
+          set({ radioMode: 'rain', speechBubble: null });
         }
-        if (get().soundEnabled) soundFx.pop();
-        set({ radioMode: mode });
+        if (get().soundEnabled) soundFx.glassTick();
       },
 
       cycleRadioMode: () => {
-        const modes: RadioMode[] = ['off', 'rain', 'fireplace', 'binaural'];
-        const current = get().radioMode;
-        const nextIdx = (modes.indexOf(current) + 1) % modes.length;
-        get().setRadioMode(modes[nextIdx]);
+        const next = get().radioMode === 'off' ? 'rain' : 'off';
+        get().setRadioMode(next);
       },
 
       setRadioVolume: (vol) => {
@@ -328,6 +319,8 @@ export const useMochiStore = create<MochiStoreState>()(
       },
 
       showSpeechBubble: (message) => {
+        // Suppress all notifications & bubbles when in Focus Radio mode!
+        if (get().radioMode !== 'off') return;
         set({ speechBubble: message });
       },
 
@@ -416,7 +409,6 @@ export const useMochiStore = create<MochiStoreState>()(
         soundEnabled: state.soundEnabled,
         clipboardGuardianEnabled: state.clipboardGuardianEnabled,
         systemVitalsEnabled: state.systemVitalsEnabled,
-        autoSanitizeExif: state.autoSanitizeExif,
         radioMode: state.radioMode,
         radioVolume: state.radioVolume,
         vitalsThreshold: state.vitalsThreshold,
@@ -426,8 +418,8 @@ export const useMochiStore = create<MochiStoreState>()(
         if (state && typeof document !== 'undefined') {
           document.documentElement.lang = state.lang;
           document.documentElement.dir = state.lang === 'fa' ? 'rtl' : 'ltr';
-          if (state.radioMode && state.radioMode !== 'off') {
-            ambientRadio.start(state.radioMode, state.radioVolume);
+          if (state.radioMode && state.radioMode === 'rain') {
+            ambientRadio.start(state.radioVolume);
           }
         }
       },

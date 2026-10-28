@@ -14,12 +14,12 @@
       {
         "label": "main",
         "title": "Mochi Desktop",
-        "width": 240,
-        "height": 260,
+        "width": 320,
+        "height": 280,
         "decorations": false,
         "transparent": true,
         "resizable": false,
-        "dragDropEnabled": true,
+        "dragDropEnabled": false,
         "shadow": false,
         "alwaysOnTop": true,
         "skipTaskbar": false

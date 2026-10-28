@@ -1,7 +1,6 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import {
   RadialOrbitalMenu,
-  DropOverlay,
   SettingsModal,
   SpeechBubble,
   TimeCapsuleModal,
@@ -43,7 +42,6 @@ function isSensitiveText(text: string): boolean {
       const p = freq[char] / len;
       entropy -= p * Math.log2(p);
     }
-    // High Shannon entropy (>4.15 bits/char indicates encrypted/cryptographic/random token)
     if (entropy > 4.15) return true;
   }
 
@@ -52,7 +50,6 @@ function isSensitiveText(text: string): boolean {
 
 export const App: React.FC = () => {
   const {
-    mascotState,
     setMascotState,
     isSettingsOpen,
     setIsSettingsOpen,
@@ -64,7 +61,7 @@ export const App: React.FC = () => {
     isTimeCapsuleModalOpen,
     speechBubble,
     clipboardGuardianEnabled,
-    autoSanitizeExif,
+    radioMode,
     setSystemVitals,
     setIsHighSystemLoad,
     showSpeechBubble,
@@ -74,17 +71,14 @@ export const App: React.FC = () => {
   } = useMochiStore();
 
   const [isHovered, setIsHovered] = useState(false);
-  const [isDraggingFile, setIsDraggingFile] = useState(false);
   const pointerStartRef = useRef<{ x: number; y: number } | null>(null);
   const lastAlertedClipboardRef = useRef<string>('');
   const alertedCapsulesRef = useRef<Set<string>>(new Set());
 
-  // Determine if side UI (Settings, TimeCapsule, or SpeechBubble) is open
-  const isSideUiOpen = isSettingsOpen || isTimeCapsuleModalOpen || !!speechBubble;
+  // Window expands ONLY for Settings or TimeCapsule modal (NEVER for speech bubbles, eliminating position jumps!)
+  const isModalOpen = isSettingsOpen || isTimeCapsuleModalOpen;
 
-  // 1. Dynamic Window Safe-Zone Resizing (Tauri Window Expansion/Collapse)
-  // Expands window to 560x360 with screen boundary clamping when side UI opens,
-  // collapses back to 240x260 when closed so desktop clicks are 100% unblocked!
+  // 1. Mathematically Zero-Jump Window Expansion for Settings Panel
   useEffect(() => {
     const updateWindowSize = async () => {
       try {
@@ -93,7 +87,7 @@ export const App: React.FC = () => {
         const win = getCurrentWindow();
         const side = await invoke<string>('set_settings_open', {
           window: win,
-          open: isSideUiOpen,
+          open: isModalOpen,
         });
         if (side === 'left' || side === 'right') {
           setSettingsSide(side);
@@ -104,9 +98,9 @@ export const App: React.FC = () => {
     };
 
     updateWindowSize();
-  }, [isSideUiOpen, setSettingsSide]);
+  }, [isModalOpen, setSettingsSide]);
 
-  // 2. Auto-dock window to bottom-right corner of the monitor on initial launch
+  // 2. Auto-dock window to bottom-right corner of the monitor on initial launch (320x280)
   useEffect(() => {
     const dockToBottomRight = async () => {
       try {
@@ -132,7 +126,7 @@ export const App: React.FC = () => {
     dockToBottomRight();
   }, []);
 
-  // 3. Global Context Menu Suppression: Disable browser right-click menu
+  // 3. Global Context Menu Suppression
   useEffect(() => {
     const disableContextMenu = (e: MouseEvent) => {
       e.preventDefault();
@@ -175,33 +169,11 @@ export const App: React.FC = () => {
 
   // 5. Frustration Comfort & System Vitals Listeners (Rust event bridge)
   useEffect(() => {
-    let unlistenFrustration: (() => void) | undefined;
     let unlistenVitals: (() => void) | undefined;
 
     const setupRustListeners = async () => {
       try {
         const { listen } = await import('@tauri-apps/api/event');
-
-        // Frustration Comfort: User typing bursts of backspaces
-        unlistenFrustration = await listen('user-frustrated', () => {
-          setMascotState('waving');
-          soundFx.magicChime();
-          showSpeechBubble({
-            id: 'frustration_' + Date.now(),
-            icon: 'sparkle',
-            text:
-              lang === 'fa'
-                ? 'نفس عمیق بکش رفیق، درستش می‌کنیم! 🌱✨'
-                : 'Take a deep breath buddy, we got this! 🌱✨',
-            timeoutMs: 5000,
-          });
-
-          setTimeout(() => {
-            if (useMochiStore.getState().mascotState === 'waving') {
-              setMascotState('idle');
-            }
-          }, 3500);
-        });
 
         // System Vitals Stream: RAM load from single background supervisor
         unlistenVitals = await listen<{
@@ -210,7 +182,6 @@ export const App: React.FC = () => {
           top_process: string;
           is_high_load: boolean;
         }>('system-vitals', (event) => {
-          if (!useMochiStore.getState().systemVitalsEnabled) return;
           const { memory_percent, cpu_percent, top_process, is_high_load } = event.payload;
           setSystemVitals({
             memoryPercent: memory_percent,
@@ -227,14 +198,13 @@ export const App: React.FC = () => {
     setupRustListeners();
 
     return () => {
-      if (unlistenFrustration) unlistenFrustration();
       if (unlistenVitals) unlistenVitals();
     };
-  }, [lang, setMascotState, showSpeechBubble, setSystemVitals, setIsHighSystemLoad]);
+  }, [setSystemVitals, setIsHighSystemLoad]);
 
-  // 6. Secret Clipboard Guardian Periodic Scanner (Every 2.8s)
+  // 6. Secret Clipboard Guardian Scanner (Pauses in Focus Mode to respect concentration)
   useEffect(() => {
-    if (!clipboardGuardianEnabled) return;
+    if (!clipboardGuardianEnabled || radioMode !== 'off') return;
 
     const checkClipboard = async () => {
       try {
@@ -316,9 +286,9 @@ export const App: React.FC = () => {
       }
     };
 
-    const interval = setInterval(checkClipboard, 2800);
+    const interval = setInterval(checkClipboard, 3500);
     return () => clearInterval(interval);
-  }, [clipboardGuardianEnabled, lang, setMascotState, showSpeechBubble, hideSpeechBubble]);
+  }, [clipboardGuardianEnabled, radioMode, lang, setMascotState, showSpeechBubble, hideSpeechBubble]);
 
   // 7. Time Capsule Alarm Watcher
   useEffect(() => {
@@ -350,126 +320,18 @@ export const App: React.FC = () => {
               },
             ],
           });
-          break; // Show one at a time
+          break;
         }
       }
     };
 
-    const interval = setInterval(checkCapsules, 4000);
+    const interval = setInterval(checkCapsules, 5000);
     return () => clearInterval(interval);
   }, [lang, setMascotState, showSpeechBubble, hideSpeechBubble, deleteTimeCapsule]);
 
-  // 8. Native Rust EXIF/Metadata Stripper File Processor (Zero UI freeze, zero Base64 memory overhead)
-  const processDroppedImage = useCallback(
-    async (filePath: string) => {
-      const lower = filePath.toLowerCase();
-      const isImage =
-        lower.endsWith('.jpg') ||
-        lower.endsWith('.jpeg') ||
-        lower.endsWith('.png') ||
-        lower.endsWith('.webp');
-
-      if (!isImage) {
-        setMascotState('processing');
-        setTimeout(() => setMascotState('idle'), 1800);
-        return;
-      }
-
-      if (!autoSanitizeExif) {
-        setMascotState('waving');
-        setTimeout(() => setMascotState('idle'), 2000);
-        return;
-      }
-
-      try {
-        const { invoke } = await import('@tauri-apps/api/core');
-
-        // Play chomp sound & animate eating
-        soundFx.nomNom();
-        setMascotState('waving');
-
-        // Execute 100% loss-free native Rust EXIF/metadata sanitizer
-        const cleanPath = await invoke<string>('sanitize_image_file', { filePath });
-
-        soundFx.magicChime();
-        showSpeechBubble({
-          id: 'exif_clean_' + Date.now(),
-          icon: 'shield',
-          text:
-            lang === 'fa'
-              ? 'اطلاعات مخفی، لوکیشن و متادیتای عکس خورده شد! نسخه امن ذخیره شد ✨'
-              : 'EXIF, GPS, and metadata stripped! Clean copy saved ✨',
-          timeoutMs: 8000,
-          actions: [
-            {
-              label: lang === 'fa' ? 'مشاهده فایل 📁' : 'View File 📁',
-              variant: 'primary',
-              onClick: async () => {
-                try {
-                  await invoke('open_file_in_folder', { path: cleanPath });
-                } catch {
-                  // Ignore
-                }
-              },
-            },
-          ],
-        });
-
-        setTimeout(() => {
-          if (useMochiStore.getState().mascotState === 'waving') {
-            setMascotState('idle');
-          }
-        }, 2500);
-      } catch (err) {
-        console.error('EXIF Sanitization failed:', err);
-        setMascotState('idle');
-      }
-    },
-    [autoSanitizeExif, lang, setMascotState, showSpeechBubble]
-  );
-
-  // 9. Tauri v2 Native File Drag-and-Drop Listener
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-
-    const setupTauriDrop = async () => {
-      try {
-        const { getCurrentWebview } = await import('@tauri-apps/api/webview');
-        const webview = getCurrentWebview();
-
-        unlisten = await webview.onDragDropEvent((event) => {
-          if (event.payload.type === 'enter' || event.payload.type === 'over') {
-            setIsDraggingFile(true);
-            setMascotState('dragOver');
-          } else if (event.payload.type === 'leave') {
-            setIsDraggingFile(false);
-            setMascotState('idle');
-          } else if (event.payload.type === 'drop') {
-            setIsDraggingFile(false);
-            const paths = (event.payload as { paths?: string[] }).paths;
-            if (paths && paths.length > 0) {
-              processDroppedImage(paths[0]);
-            } else {
-              setMascotState('processing');
-              setTimeout(() => setMascotState('idle'), 2000);
-            }
-          }
-        });
-      } catch {
-        // Not in Tauri runtime
-      }
-    };
-
-    setupTauriDrop();
-
-    return () => {
-      if (unlisten) unlisten();
-    };
-  }, [setMascotState, processDroppedImage]);
-
-  // 10. Window Drag Interaction: hold left-click and drag on Mochi to move window
+  // 8. Window Drag Interaction
   const handlePointerDown = (e: React.PointerEvent) => {
-    if (e.button === 0 && !isSideUiOpen) {
+    if (e.button === 0 && !isModalOpen) {
       pointerStartRef.current = { x: e.clientX, y: e.clientY };
     }
   };
@@ -508,40 +370,6 @@ export const App: React.FC = () => {
     toggleSettings();
   };
 
-  // Web fallback drag & drop
-  const handleDragOver = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      setIsDraggingFile(true);
-      setMascotState('dragOver');
-    },
-    [setMascotState]
-  );
-
-  const handleDragLeave = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      setIsDraggingFile(false);
-      setMascotState('idle');
-    },
-    [setMascotState]
-  );
-
-  const handleDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      setIsDraggingFile(false);
-      setMascotState('processing');
-      setTimeout(() => {
-        setMascotState('idle');
-      }, 2500);
-    },
-    [setMascotState]
-  );
-
   return (
     <div
       onMouseEnter={() => setIsHovered(true)}
@@ -552,12 +380,9 @@ export const App: React.FC = () => {
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
       className={`relative w-screen h-screen bg-transparent overflow-hidden select-none flex items-end ${
-        !isSideUiOpen
-          ? 'justify-center p-0'
+        !isModalOpen
+          ? 'justify-end'
           : settingsSide === 'right'
           ? 'flex-row-reverse justify-end p-2 gap-2.5'
           : 'flex-row justify-end p-2 gap-2.5'
@@ -567,23 +392,17 @@ export const App: React.FC = () => {
         backgroundColor: 'transparent',
       }}
     >
-      {/* Side Safe-Zone UI Panel (SpeechBubble / SettingsModal / TimeCapsuleModal) */}
-      {isSideUiOpen && (
+      {/* Side Panel for SettingsModal or TimeCapsuleModal when explicitly opened */}
+      {isModalOpen && (
         <div className="flex-1 h-full flex items-center justify-center pointer-events-auto">
-          {isSettingsOpen ? (
-            <SettingsModal />
-          ) : isTimeCapsuleModalOpen ? (
-            <TimeCapsuleModal />
-          ) : speechBubble ? (
-            <SpeechBubble side={settingsSide} />
-          ) : null}
+          {isSettingsOpen ? <SettingsModal /> : <TimeCapsuleModal />}
         </div>
       )}
 
-      {/* Mascot Viewport (Fixed at 210x250) */}
+      {/* Mascot Viewport (Fixed at 200x230 - NEVER resizes or shifts camera aspect ratio!) */}
       <div
         onContextMenu={handleMascotContextMenu}
-        className="relative w-[210px] h-[250px] flex items-center justify-center flex-shrink-0 pointer-events-auto"
+        className="relative w-[200px] h-[230px] flex items-center justify-center flex-shrink-0 pointer-events-auto"
       >
         {/* Real 3D Floating Mochi Mascot */}
         <MochiCanvas
@@ -592,12 +411,14 @@ export const App: React.FC = () => {
           onContextMenu={handleMascotContextMenu}
         />
 
-        {/* Radial Orbital Glass Menu (Appears strictly on Hover when Settings is closed) */}
+        {/* Radial Orbital Glass Menu (Appears on Hover when Settings is closed) */}
         <RadialOrbitalMenu isVisible={isHovered && !isSettingsOpen} />
-
-        {/* Drag & Drop Feedback Overlay */}
-        <DropOverlay isDragging={isDraggingFile || mascotState === 'dragOver'} />
       </div>
+
+      {/* Floating Speech Bubble (Rendered in upper safe space above Mochi - ZERO window resize, ZERO lag!) */}
+      {speechBubble && !isModalOpen && (
+        <SpeechBubble side={settingsSide} />
+      )}
     </div>
   );
 };
