@@ -123,6 +123,7 @@ fn set_window_skip_taskbar(window: tauri::Window, skip: bool) -> Result<(), Stri
 
 #[tauri::command]
 fn hide_window_to_tray(window: tauri::Window, app: tauri::AppHandle) -> Result<(), String> {
+    let _ = set_settings_open(window.clone(), false);
     let _ = app.emit("window-visibility-changed", false);
     window.hide().map_err(|e| e.to_string())?;
     #[cfg(target_os = "windows")]
@@ -132,6 +133,7 @@ fn hide_window_to_tray(window: tauri::Window, app: tauri::AppHandle) -> Result<(
 
 #[tauri::command]
 fn show_window_from_tray(window: tauri::Window, app: tauri::AppHandle) -> Result<(), String> {
+    let _ = set_settings_open(window.clone(), false);
     let _ = app.emit("window-visibility-changed", true);
     window.show().map_err(|e| e.to_string())?;
     let _ = window.unminimize();
@@ -381,6 +383,7 @@ pub fn run() {
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
+                let _ = set_settings_open(window.clone(), false);
                 let _ = window.app_handle().emit("window-visibility-changed", false);
                 let _ = window.hide();
                 #[cfg(target_os = "windows")]
@@ -432,11 +435,13 @@ pub fn run() {
                             if let Some(window) = app.get_webview_window("main") {
                                 if let Ok(visible) = window.is_visible() {
                                     if visible {
+                                        let _ = set_settings_open(window.as_ref().window().clone(), false);
                                         let _ = app.emit("window-visibility-changed", false);
                                         let _ = window.hide();
                                         #[cfg(target_os = "windows")]
                                         win_mem::trim_host_working_set();
                                     } else {
+                                        let _ = set_settings_open(window.as_ref().window().clone(), false);
                                         let _ = window.show();
                                         let _ = window.unminimize();
                                         let _ = window.set_focus();
@@ -473,6 +478,7 @@ pub fn run() {
                     {
                         let app = tray.app_handle();
                         if let Some(window) = app.get_webview_window("main") {
+                            let _ = set_settings_open(window.as_ref().window().clone(), false);
                             let _ = window.show();
                             let _ = window.unminimize();
                             let _ = window.set_focus();

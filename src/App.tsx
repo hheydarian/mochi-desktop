@@ -61,6 +61,7 @@ export const App: React.FC = () => {
     settingsSide,
     setSettingsSide,
     isTimeCapsuleModalOpen,
+    setIsTimeCapsuleModalOpen,
     speechBubble,
     clipboardGuardianEnabled,
     focusMode,
@@ -167,6 +168,9 @@ export const App: React.FC = () => {
         });
         unlistenVisibility = await listen<boolean>('window-visibility-changed', (event) => {
           setWindowVisible(event.payload);
+          // Whenever Mochi is hidden or shown again, auto-close any open modals so Mochi is clean
+          setIsSettingsOpen(false);
+          setIsTimeCapsuleModalOpen(false);
         });
       } catch {
         // Not in Tauri runtime
@@ -180,7 +184,7 @@ export const App: React.FC = () => {
       if (unlistenPin) unlistenPin();
       if (unlistenVisibility) unlistenVisibility();
     };
-  }, [setIsSettingsOpen, toggleAlwaysOnTop, setWindowVisible]);
+  }, [setIsSettingsOpen, setIsTimeCapsuleModalOpen, toggleAlwaysOnTop, setWindowVisible]);
 
   // 5. Frustration Comfort & System Vitals Listeners (Rust event bridge)
   useEffect(() => {

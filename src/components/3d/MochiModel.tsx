@@ -77,48 +77,77 @@ const PooledModel: React.FC<PooledModelProps> = ({ modelPath, visible }) => {
   );
 };
 
-// 3D Sleep Bubble Particles (Single allocation, zero GPU leak)
-const SHARED_BUBBLE_GEOMETRY = new THREE.SphereGeometry(1, 8, 8);
+// 3D Sleep Bubble Particles (Smooth 24x24 geometry, glossy soap glint, seamless lifecycle)
+const SHARED_BUBBLE_GEOMETRY = new THREE.SphereGeometry(1, 24, 24);
+const SHARED_GLINT_GEOMETRY = new THREE.SphereGeometry(1, 12, 12);
 const SHARED_BUBBLE_MATERIAL = new THREE.MeshBasicMaterial({
-  color: '#93c5fd',
+  color: '#7dd3fc',
   transparent: true,
-  opacity: 0.55,
+  opacity: 0.65,
+});
+const SHARED_GLINT_MATERIAL = new THREE.MeshBasicMaterial({
+  color: '#ffffff',
+  transparent: true,
+  opacity: 0.85,
 });
 
 const SleepBubbles: React.FC<{ visible: boolean }> = ({ visible }) => {
   const bubblesRef = useRef<THREE.Group>(null);
-  const bubbleCount = 4;
   const bubbleData = useMemo(() => {
-    return Array.from({ length: bubbleCount }, (_, i) => ({
-      offsetY: i * 0.22,
-      speed: 0.32 + i * 0.08,
-      baseX: 0.16 + (i % 2 === 0 ? 0.06 : -0.06),
-      scale: 0.035 + i * 0.016,
-    }));
+    return [
+      { phase: 0.0, speed: 0.26, baseX: 0.16, baseScale: 0.046 },
+      { phase: 0.32, speed: 0.30, baseX: 0.22, baseScale: 0.038 },
+      { phase: 0.64, speed: 0.28, baseX: 0.12, baseScale: 0.052 },
+      { phase: 0.84, speed: 0.34, baseX: 0.18, baseScale: 0.030 },
+    ];
   }, []);
 
   useFrame((state, delta) => {
     if (!visible || !bubblesRef.current) return;
     const time = state.clock.elapsedTime;
-    bubblesRef.current.children.forEach((child, i) => {
+    bubblesRef.current.children.forEach((group, i) => {
       const b = bubbleData[i];
-      const y = (time * b.speed + b.offsetY) % 0.85;
-      child.position.y = 0.28 + y;
-      const targetX = b.baseX + Math.sin(time * 2.2 + i * 1.5) * 0.04;
-      child.position.x = THREE.MathUtils.damp(child.position.x, targetX, 8, delta);
+      // Continuous normalized progress 0.0 -> 1.0 (seamless loop)
+      const p = (time * b.speed + b.phase) % 1.0;
+
+      // 1. Vertical float from head (0.26) up to top (0.96)
+      const y = 0.26 + p * 0.70;
+      group.position.y = y;
+
+      // 2. Smooth natural S-curve sway
+      const sway = Math.sin(time * 2.2 + i * 1.8) * 0.045;
+      const targetX = b.baseX + sway;
+      group.position.x = THREE.MathUtils.damp(group.position.x, targetX, 8, delta);
+      group.position.z = Math.cos(time * 1.8 + i) * 0.025;
+
+      // 3. Flawless 3-phase scale & pop lifecycle (Zero popping/snapping at 1.0):
+      // - p < 0.20: Inflate smoothly from 0 to full size
+      // - 0.20 <= p < 0.75: Full size with gentle breathing
+      // - p >= 0.75: Gentle swell (+22%) and smooth shrink to 0 as it pops!
+      let scaleMult = 1.0;
+      if (p < 0.20) {
+        scaleMult = Math.sin((p / 0.20) * Math.PI * 0.5);
+      } else if (p >= 0.75) {
+        const fadeP = (p - 0.75) / 0.25;
+        scaleMult = (1 + Math.sin(fadeP * Math.PI) * 0.22) * (1 - fadeP);
+      }
+      const currentScale = Math.max(0.0001, b.baseScale * scaleMult);
+      group.scale.setScalar(currentScale);
     });
   });
 
   return (
     <group ref={bubblesRef} visible={visible}>
       {bubbleData.map((b, i) => (
-        <mesh
-          key={i}
-          geometry={SHARED_BUBBLE_GEOMETRY}
-          material={SHARED_BUBBLE_MATERIAL}
-          scale={b.scale}
-          position={[b.baseX, 0.28 + b.offsetY, 0]}
-        />
+        <group key={i} position={[b.baseX, 0.26, 0]}>
+          <mesh geometry={SHARED_BUBBLE_GEOMETRY} material={SHARED_BUBBLE_MATERIAL} />
+          <mesh
+            geometry={SHARED_GLINT_GEOMETRY}
+            material={SHARED_GLINT_MATERIAL}
+            scale={0.24}
+            position={[0.35, 0.35, 0.7]}
+          />
+        </group>
       ))}
     </group>
   );
@@ -259,16 +288,19 @@ export const MochiModel: React.FC<{ isHovered?: boolean }> = ({ isHovered = fals
 
   // Smooth Jelly Morph State Machine
   const [displayedState, setDisplayedState] = useState<MascotState>(mascotState);
+  const targetStateRef = useRef<MascotState>(mascotState);
   const morphRef = useRef<{
-    phase: 'idle' | 'squash' | 'pop';
+    phase: 'idle' | 'anticipation' | 'pop' | 'sleep_sink' | 'wake_stretch';
     startTime: number;
     squashFactor: number;
     popFactor: number;
+    sinkFactor: number;
   }>({
     phase: 'idle',
     startTime: 0,
     squashFactor: 0,
     popFactor: 0,
+    sinkFactor: 0,
   });
 
   const lastCursorRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -353,16 +385,19 @@ export const MochiModel: React.FC<{ isHovered?: boolean }> = ({ isHovered = fals
     }
   }, [animSpeed]);
 
-  // Initiate Jelly Morph when mascotState changes
+  // Initiate Organic Jelly Morph when mascotState changes
   useEffect(() => {
-    setDisplayedState(mascotState);
+    if (mascotState === displayedState && targetStateRef.current === mascotState) return;
+    targetStateRef.current = mascotState;
+
     morphRef.current = {
-      phase: 'pop',
+      phase: 'anticipation',
       startTime: performance.now(),
       squashFactor: 0,
-      popFactor: 0.18,
+      popFactor: 0,
+      sinkFactor: 0,
     };
-  }, [mascotState]);
+  }, [mascotState, displayedState]);
 
   // Clean up timer on unmount
   useEffect(() => {
@@ -450,11 +485,11 @@ export const MochiModel: React.FC<{ isHovered?: boolean }> = ({ isHovered = fals
     let throttleModulo = 1; // 1 = every frame (60 FPS hardware VSync)
     if (!isHovered && !isActivelyMoving && !isWaving && !isClicking && !isMorphing) {
       if (displayedState === 'sleeping') {
-        throttleModulo = 6; // 10 FPS during sleep
+        throttleModulo = 2; // 30 FPS during sleep so bubbles and gentle breathing are silky smooth!
       } else if (focusMode) {
         throttleModulo = 4; // 15 FPS in Focus Mode (calm, minimal resource load)
       } else if (timeSinceMovement > 10000) {
-        throttleModulo = 5; // 12 FPS in deep idle (>10s still)
+        throttleModulo = 4; // 15 FPS in deep idle (>10s still)
       } else {
         throttleModulo = 2; // 30 FPS in calm idle
       }
@@ -617,29 +652,60 @@ export const MochiModel: React.FC<{ isHovered?: boolean }> = ({ isHovered = fals
     // Periodic Happy Hop in Idle
     const hopCycle = (time * 0.45) % 9;
     const hopY = !isSleeping && hopCycle < 0.65 ? Math.sin((hopCycle / 0.65) * Math.PI) * 0.07 : 0;
-    motion.position.y = THREE.MathUtils.damp(motion.position.y, floatY + hopY, 10 * speedMult, delta);
 
-    // --- 4. Two-Phase Jelly Pop Morph State Machine ---
+    // --- 4. Organic Two-Phase Jelly Morph State Machine ---
     const morph = morphRef.current;
-    if (morph.phase === 'squash') {
+    if (morph.phase === 'anticipation') {
       const elapsed = performance.now() - morph.startTime;
-      const progress = Math.min(1, elapsed / 85);
+      const duration = 120; // 120ms organic anticipation squash
+      const progress = Math.min(1, elapsed / duration);
       morph.squashFactor = Math.sin(progress * Math.PI * 0.5);
 
       if (progress >= 1) {
-        setDisplayedState(mascotState);
-        morph.phase = 'pop';
+        // Swap 3D model exactly at peak squash compression!
+        const nextState = targetStateRef.current;
+        const prevState = displayedState;
+        setDisplayedState(nextState);
         morph.startTime = performance.now();
         morph.squashFactor = 0;
+
+        if (nextState === 'sleeping') {
+          morph.phase = 'sleep_sink';
+        } else if (prevState === 'sleeping') {
+          morph.phase = 'wake_stretch';
+        } else {
+          morph.phase = 'pop';
+        }
       }
     } else if (morph.phase === 'pop') {
       const elapsed = performance.now() - morph.startTime;
-      const t = elapsed / 260;
+      const duration = 340; // 340ms harmonic spring settle
+      const t = elapsed / duration;
       if (t >= 1) {
         morph.phase = 'idle';
         morph.popFactor = 0;
       } else {
-        morph.popFactor = Math.sin(t * Math.PI) * Math.exp(-t * 3.2);
+        morph.popFactor = Math.sin(t * Math.PI) * Math.exp(-t * 3.4);
+      }
+    } else if (morph.phase === 'sleep_sink') {
+      const elapsed = performance.now() - morph.startTime;
+      const duration = 420; // 420ms gentle melt into sleep
+      const t = elapsed / duration;
+      if (t >= 1) {
+        morph.phase = 'idle';
+        morph.sinkFactor = 0;
+      } else {
+        morph.sinkFactor = (1 - t) * Math.sin(t * Math.PI * 0.5);
+      }
+    } else if (morph.phase === 'wake_stretch') {
+      const elapsed = performance.now() - morph.startTime;
+      const duration = 360; // 360ms yawn stretch
+      const t = elapsed / duration;
+      if (t >= 1) {
+        morph.phase = 'idle';
+        morph.popFactor = 0;
+      } else {
+        morph.popFactor = Math.sin(t * Math.PI) * Math.exp(-t * 3.0);
       }
     }
 
@@ -651,9 +717,12 @@ export const MochiModel: React.FC<{ isHovered?: boolean }> = ({ isHovered = fals
     const baseScale = mascotScale;
     const jellyXZ = jellyY * 0.5;
 
-    // Morph Scale Factors
-    const morphY = -morph.squashFactor * 0.22 + morph.popFactor * 0.26;
-    const morphXZ = morph.squashFactor * 0.15 - morph.popFactor * 0.14;
+    // Morph Scale & Position Offsets:
+    const morphY = -morph.squashFactor * 0.22 + morph.popFactor * 0.25 - morph.sinkFactor * 0.08;
+    const morphXZ = morph.squashFactor * 0.14 - morph.popFactor * 0.13 + morph.sinkFactor * 0.06;
+    const morphPosY = -morph.squashFactor * 0.04 - morph.sinkFactor * 0.02;
+
+    motion.position.y = THREE.MathUtils.damp(motion.position.y, floatY + hopY + morphPosY, 10 * speedMult, delta);
 
     const finalScaleX = baseScale * (1 - jellyXZ + clickSquash * 0.32 + morphXZ);
     const finalScaleY = baseScale * (1 + jellyY - clickSquash * 0.36 + morphY);

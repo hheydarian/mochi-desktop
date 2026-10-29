@@ -14,6 +14,7 @@ export const RadialOrbitalMenu: React.FC<RadialOrbitalMenuProps> = ({ isVisible 
     alwaysOnTop,
     toggleAlwaysOnTop,
     isSettingsOpen,
+    setIsSettingsOpen,
     toggleSettings,
     focusMode,
     toggleFocusMode,
@@ -33,6 +34,9 @@ export const RadialOrbitalMenu: React.FC<RadialOrbitalMenuProps> = ({ isVisible 
   };
 
   const hideToTray = async () => {
+    // Ensure all panels are closed when hiding so reopening is always clean
+    setIsSettingsOpen(false);
+    setIsTimeCapsuleModalOpen(false);
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       await invoke('hide_window_to_tray');
