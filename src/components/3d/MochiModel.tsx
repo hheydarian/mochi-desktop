@@ -222,38 +222,6 @@ const SweatDrop: React.FC<{ visible: boolean }> = ({ visible }) => {
   );
 };
 
-// Procedural Focus & Calm Antenna Glow (Gentle cyan/emerald halo without audio)
-const SHARED_ANTENNA_GEOMETRY = new THREE.SphereGeometry(0.04, 8, 8);
-
-const FocusAntennaGlow: React.FC<{ active: boolean }> = ({ active }) => {
-  const lightRef = useRef<THREE.PointLight>(null);
-  const meshRef = useRef<THREE.Mesh>(null);
-  const glowColor = '#34d399';
-
-  useFrame((state) => {
-    if (!active) return;
-    const t = state.clock.elapsedTime * 2.2;
-    const pulse = 0.75 + Math.sin(t) * 0.25;
-    if (lightRef.current) {
-      lightRef.current.intensity = pulse * 1.3;
-    }
-    if (meshRef.current) {
-      meshRef.current.scale.setScalar(0.85 + pulse * 0.2);
-    }
-  });
-
-  if (!active) return null;
-
-  return (
-    <group position={[0, 0.44, 0]}>
-      <pointLight ref={lightRef} color={glowColor} intensity={1.3} distance={1.1} />
-      <mesh ref={meshRef} geometry={SHARED_ANTENNA_GEOMETRY}>
-        <meshBasicMaterial color={glowColor} transparent opacity={0.65} />
-      </mesh>
-    </group>
-  );
-};
-
 export const MochiModel: React.FC<{ isHovered?: boolean }> = ({ isHovered = false }) => {
   const {
     mascotState,
@@ -268,14 +236,16 @@ export const MochiModel: React.FC<{ isHovered?: boolean }> = ({ isHovered = fals
     isHighSystemLoad,
     systemVitals,
     focusMode,
-    toggleFocusMode,
     showSpeechBubble,
     lang,
   } = useMochiStore();
 
   const rootGroupRef = useRef<THREE.Group>(null);
   const motionGroupRef = useRef<THREE.Group>(null);
-  const squashRef = useRef(0);
+  const clickBounceRef = useRef<{ startTime: number; active: boolean }>({
+    startTime: 0,
+    active: false,
+  });
   const waveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const frameGovernorRef = useRef(0);
@@ -312,7 +282,6 @@ export const MochiModel: React.FC<{ isHovered?: boolean }> = ({ isHovered = fals
     nextChange: Date.now() + 10000,
   });
 
-  const [showSparkles, setShowSparkles] = useState(false);
   const [secondaryModelsLoaded, setSecondaryModelsLoaded] = useState(false);
 
   // Lazy-load secondary models in background 450ms after Mochi is already visible on screen!
@@ -406,15 +375,22 @@ export const MochiModel: React.FC<{ isHovered?: boolean }> = ({ isHovered = fals
     };
   }, []);
 
-  // Springy squash & stretch on click with temporary waving state
+  // Springy juicy physical jelly bounce on click (Zero React re-renders)
   const handleClick = (e: { stopPropagation: () => void }) => {
     e.stopPropagation();
 
-    squashRef.current = 1.0;
-    setShowSparkles(true);
-    setTimeout(() => setShowSparkles(false), 2200);
-
     if (soundEnabled) soundFx.boing();
+
+    if (mascotState === 'sleeping') {
+      setMascotState('idle');
+      lastActiveTimeRef.current = Date.now();
+    } else {
+      // 60 FPS spring bounce impulse
+      clickBounceRef.current = {
+        startTime: performance.now(),
+        active: true,
+      };
+    }
 
     if (isHighSystemLoad) {
       showSpeechBubble({
@@ -427,25 +403,15 @@ export const MochiModel: React.FC<{ isHovered?: boolean }> = ({ isHovered = fals
         timeoutMs: 5000,
       });
     }
-
-    if (mascotState === 'sleeping') {
-      setMascotState('idle');
-      lastActiveTimeRef.current = Date.now();
-    } else {
-      if (waveTimerRef.current) clearTimeout(waveTimerRef.current);
-      setMascotState('waving');
-
-      waveTimerRef.current = setTimeout(() => {
-        if (useMochiStore.getState().mascotState === 'waving') {
-          setMascotState('idle');
-        }
-      }, 2500);
-    }
   };
 
   const handleDoubleClick = (e: { stopPropagation: () => void }) => {
     e.stopPropagation();
-    toggleFocusMode();
+    if (soundEnabled) soundFx.magicChime();
+    clickBounceRef.current = {
+      startTime: performance.now(),
+      active: true,
+    };
   };
 
   useFrame((state, delta) => {
@@ -477,7 +443,7 @@ export const MochiModel: React.FC<{ isHovered?: boolean }> = ({ isHovered = fals
     const timeSinceMovement = nowPerf - lastActivePointerRef.current;
     const isActivelyMoving = timeSinceMovement < 1000;
     const isWaving = displayedState === 'waving';
-    const isClicking = squashRef.current > 0.02;
+    const isClicking = clickBounceRef.current.active;
     const isMorphing = morphRef.current.phase !== 'idle';
 
     // Zero-Idle Governor:
@@ -709,9 +675,26 @@ export const MochiModel: React.FC<{ isHovered?: boolean }> = ({ isHovered = fals
       }
     }
 
-    // --- 5. Interactive Click Squash & Stretch ---
-    squashRef.current = THREE.MathUtils.damp(squashRef.current, 0, 8.5, delta);
-    const clickSquash = squashRef.current;
+    // --- 5. Interactive Click Spring Harmonic Bounce (Zero-allocation, 60fps) ---
+    let clickSquashY = 0;
+    let clickSquashXZ = 0;
+    let clickHopY = 0;
+
+    if (clickBounceRef.current.active) {
+      const elapsed = performance.now() - clickBounceRef.current.startTime;
+      const duration = 360;
+      const t = elapsed / duration;
+      if (t >= 1) {
+        clickBounceRef.current.active = false;
+      } else {
+        // Organic physical impulse curve:
+        // Immediate soft squish on contact, followed by joyful vertical spring hop and harmonic settle
+        const impulse = Math.sin(t * Math.PI * 3.2) * Math.exp(-t * 3.6);
+        clickSquashY = -impulse * 0.24;
+        clickSquashXZ = impulse * 0.14;
+        clickHopY = Math.max(0, -impulse * 0.055);
+      }
+    }
 
     // Default base scale is 0.76 (10% smaller, delicate & cute)
     const baseScale = mascotScale;
@@ -722,11 +705,16 @@ export const MochiModel: React.FC<{ isHovered?: boolean }> = ({ isHovered = fals
     const morphXZ = morph.squashFactor * 0.14 - morph.popFactor * 0.13 + morph.sinkFactor * 0.06;
     const morphPosY = -morph.squashFactor * 0.04 - morph.sinkFactor * 0.02;
 
-    motion.position.y = THREE.MathUtils.damp(motion.position.y, floatY + hopY + morphPosY, 10 * speedMult, delta);
+    motion.position.y = THREE.MathUtils.damp(
+      motion.position.y,
+      floatY + hopY + morphPosY + clickHopY,
+      12 * speedMult,
+      delta
+    );
 
-    const finalScaleX = baseScale * (1 - jellyXZ + clickSquash * 0.32 + morphXZ);
-    const finalScaleY = baseScale * (1 + jellyY - clickSquash * 0.36 + morphY);
-    const finalScaleZ = baseScale * (1 - jellyXZ + clickSquash * 0.32 + morphXZ);
+    const finalScaleX = baseScale * (1 - jellyXZ + clickSquashXZ + morphXZ);
+    const finalScaleY = baseScale * (1 + jellyY + clickSquashY + morphY);
+    const finalScaleZ = baseScale * (1 - jellyXZ + clickSquashXZ + morphXZ);
 
     root.scale.set(finalScaleX, finalScaleY, finalScaleZ);
 
@@ -773,11 +761,8 @@ export const MochiModel: React.FC<{ isHovered?: boolean }> = ({ isHovered = fals
         {/* 3D Glass Sweat Drop (Beside forehead under heavy system load) */}
         <SweatDrop visible={isHighSystemLoad} />
 
-        {/* 3D Procedural Focus & Calm Antenna Glow */}
-        <FocusAntennaGlow active={focusMode} />
-
-        {/* Transient Sparkles on Click or Waving (Pooled in scene graph, zero shader recreation) */}
-        <group visible={displayedState === 'waving' || showSparkles}>
+        {/* Transient Sparkles during Waving (Pooled in scene graph, zero shader recreation) */}
+        <group visible={displayedState === 'waving'}>
           <Sparkles
             count={12}
             scale={1.6}

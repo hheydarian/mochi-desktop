@@ -156,7 +156,7 @@ export const useMochiStore = create<MochiStoreState>()(
             soundFx.sleepChirp();
           } else if (state === 'dizzy') {
             soundFx.dizzy();
-          } else {
+          } else if (state === 'waving') {
             soundFx.pop();
           }
         }
