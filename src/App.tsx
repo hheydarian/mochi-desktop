@@ -375,10 +375,24 @@ export const App: React.FC = () => {
     pointerStartRef.current = null;
   };
 
-  // Clicking Mochi while settings is open toggles it closed
+  // Clicking Mochi toggles Ghost Hunter port bubble (or closes settings if open)
   const handleMascotClick = () => {
     if (isSettingsOpen) {
       setIsSettingsOpen(false);
+      return;
+    }
+    if (isTimeCapsuleModalOpen) {
+      setIsTimeCapsuleModalOpen(false);
+      return;
+    }
+    if (speechBubble && speechBubble.icon === 'ghost-hunter') {
+      hideSpeechBubble();
+    } else {
+      showSpeechBubble({
+        id: 'ghost_hunter_' + Date.now(),
+        icon: 'ghost-hunter',
+        text: 'Localhost Ghost Hunter',
+      });
     }
   };
 

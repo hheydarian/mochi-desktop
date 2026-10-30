@@ -357,6 +357,113 @@ fn read_clipboard_text() -> Result<String, String> {
     }
 }
 
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct PortProcessInfo {
+    pub port: u16,
+    pub pid: u32,
+    pub name: String,
+}
+
+#[tauri::command]
+fn check_local_ports() -> Vec<PortProcessInfo> {
+    let mut active_ports = Vec::new();
+    let common_ports: [u16; 16] = [
+        3000, 3001, 4200, 5000, 5173, 5174, 8000, 8080, 8081, 8888, 5432, 3306, 6379, 27017,
+        1420, 1433,
+    ];
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+        let mut cmd = std::process::Command::new("netstat");
+        cmd.args(["-ano", "-p", "tcp"]);
+        cmd.creation_flags(CREATE_NO_WINDOW);
+
+        if let Ok(output) = cmd.output() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                if !line.contains("LISTENING") {
+                    continue;
+                }
+                for &port in &common_ports {
+                    let port_str = format!(":{port}");
+                    if line.contains(&port_str) {
+                        let parts: Vec<&str> = line.split_whitespace().collect();
+                        if parts.len() >= 5 {
+                            let local_addr = parts[1];
+                            if local_addr.ends_with(&port_str) {
+                                if let Ok(pid) = parts.last().unwrap_or(&"0").parse::<u32>() {
+                                    if pid > 0 && !active_ports.iter().any(|p: &PortProcessInfo| p.port == port) {
+                                        let mut proc_name = format!("PID {pid}");
+                                        let mut t_cmd = std::process::Command::new("tasklist");
+                                        t_cmd.args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"]);
+                                        t_cmd.creation_flags(CREATE_NO_WINDOW);
+                                        if let Ok(t_out) = t_cmd.output() {
+                                            let t_str = String::from_utf8_lossy(&t_out.stdout);
+                                            if let Some(first_line) = t_str.lines().next() {
+                                                let cols: Vec<&str> = first_line.split("\",\"").collect();
+                                                if let Some(first_col) = cols.first() {
+                                                    let trimmed = first_col.trim_matches('"').trim();
+                                                    if !trimmed.is_empty() && !trimmed.starts_with("INFO:") {
+                                                        proc_name = trimmed.to_string();
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        active_ports.push(PortProcessInfo {
+                                            port,
+                                            pid,
+                                            name: proc_name,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    active_ports
+}
+
+#[tauri::command]
+fn kill_port_process(pid: u32) -> Result<bool, String> {
+    if pid <= 4 {
+        return Err("Cannot terminate core system process".into());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+        let mut cmd = std::process::Command::new("taskkill");
+        cmd.args(["/F", "/PID", &pid.to_string()]);
+        cmd.creation_flags(CREATE_NO_WINDOW);
+
+        match cmd.status() {
+            Ok(s) if s.success() => Ok(true),
+            Ok(_) => Err("Failed to terminate process".into()),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let mut cmd = std::process::Command::new("kill");
+        cmd.args(["-9", &pid.to_string()]);
+        match cmd.status() {
+            Ok(s) if s.success() => Ok(true),
+            Ok(_) => Err("Failed to terminate process".into()),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     #[cfg(target_os = "windows")]
@@ -647,7 +754,9 @@ pub fn run() {
             show_window_from_tray,
             quit_app,
             clear_clipboard,
-            read_clipboard_text
+            read_clipboard_text,
+            check_local_ports,
+            kill_port_process
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { Settings, Pin, Move, X, Clock, Sparkles } from 'lucide-react';
+import { Settings, Pin, Move, X, Clock, Sparkles, Radio } from 'lucide-react';
 import { useMochiStore } from '../../store/useMochiStore';
 import { useTranslation } from '../../locales';
 
@@ -57,10 +57,10 @@ export const RadialOrbitalMenu: React.FC<RadialOrbitalMenuProps> = ({ isVisible 
 
   // Smart Screen-Roof Adaptation: If window is close to screen roof (<120px), open arc downwards
   const isNearTop = typeof window !== 'undefined' && window.screenY < 120;
-  // 6 items evenly spread across a clean, balanced arc
+  // 7 items evenly spread across an ergonomic, balanced arc
   const arcAngles = isNearTop
-    ? [28, 52, 76, 104, 128, 152] // Open downwards when near screen ceiling
-    : [-152, -128, -104, -76, -52, -28]; // Open upwards in normal position
+    ? [20, 42, 64, 88, 112, 134, 156] // Open downwards when near screen ceiling
+    : [-156, -134, -112, -88, -64, -42, -20]; // Open upwards in normal position
 
   interface OrbItem {
     id: string;
@@ -82,6 +82,25 @@ export const RadialOrbitalMenu: React.FC<RadialOrbitalMenuProps> = ({ isVisible 
     ? 'حالت تمرکز و آرامش 🧘'
     : 'Focus & Calm Mode 🧘';
 
+  const ghostHunterTooltip = lang === 'fa'
+    ? 'رادار پورت‌های زامبی 👻'
+    : 'Localhost Ghost Hunter 👻';
+
+  const toggleGhostHunter = () => {
+    const current = useMochiStore.getState().speechBubble;
+    if (current && current.icon === 'ghost-hunter') {
+      useMochiStore.getState().hideSpeechBubble();
+    } else {
+      useMochiStore.getState().showSpeechBubble({
+        id: 'ghost_hunter_' + Date.now(),
+        icon: 'ghost-hunter',
+        text: 'Localhost Ghost Hunter',
+      });
+    }
+  };
+
+  const isGhostHunterOpen = useMochiStore.getState().speechBubble?.icon === 'ghost-hunter';
+
   const items: OrbItem[] = [
     {
       id: 'settings',
@@ -92,6 +111,14 @@ export const RadialOrbitalMenu: React.FC<RadialOrbitalMenuProps> = ({ isVisible 
       onClick: toggleSettings,
     },
     {
+      id: 'ghost',
+      icon: <Radio className="w-3.5 h-3.5 text-emerald-300" />,
+      tooltip: ghostHunterTooltip,
+      active: isGhostHunterOpen,
+      activeClass: 'text-emerald-300 ring-2 ring-emerald-400/80 bg-emerald-500/30 shadow-emerald-500/40 animate-pulse',
+      onClick: toggleGhostHunter,
+    },
+    {
       id: 'capsule',
       icon: <Clock className="w-3.5 h-3.5 text-cyan-200" />,
       tooltip: 'کپسول زمان ⏳',
@@ -100,10 +127,10 @@ export const RadialOrbitalMenu: React.FC<RadialOrbitalMenuProps> = ({ isVisible 
     },
     {
       id: 'focus',
-      icon: <Sparkles className="w-3.5 h-3.5 text-emerald-200" />,
+      icon: <Sparkles className="w-3.5 h-3.5 text-pink-200" />,
       tooltip: focusTooltip,
       active: focusMode,
-      activeClass: 'text-emerald-300 ring-2 ring-emerald-400/80 bg-emerald-500/30 shadow-emerald-500/40 animate-pulse',
+      activeClass: 'text-pink-300 ring-2 ring-pink-400/80 bg-pink-500/30 shadow-pink-500/40 animate-pulse',
       onClick: toggleFocusMode,
     },
     {
